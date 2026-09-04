@@ -70,11 +70,38 @@ AI 干活前能查你的积累，干完活能把成果存回去，还会定期�
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| **Phase 1** | 本地索引 + Agent 工具集（`vault_search` / `vault_query` / `vault_read`） | 📝 设计完成，待实现 |
+| **Phase 1** | 本地索引 + Agent 工具集（`vault_search` / `vault_query` / `vault_read`） | ✅ 已实现，真机验证通过 |
 | **Phase 2** | 会话记忆注入 + Web GUI 面板 + 一键捕获成笔记 | 📝 设计完成 |
 | **Phase 3** | 定时巡检管家 + 审查队列写回 + 语义检索（可选） | 📝 设计完成 |
 
 ---
+
+## 安装与使用
+
+```bash
+# 安装到目标 profile（web profile 需重启后生效）
+dsh plugin --profile web add <本仓库路径>
+
+# 配置 vault（插件设置页，或 settings.yaml）：
+#   dsh-plugin-vault-memory:
+#     vaults:
+#       - path: D:\projectObsidian\moqian-note
+#         label: note
+```
+
+装好后，在会话里直接说"查一下我知识库里关于 X 的笔记"即可。agent 会调用：
+- `vault_search` 全文检索（中文 bigram 分词 + 短查询子串兜底）
+- `vault_query` 结构化查询（目录/标签/时间/frontmatter）
+- `vault_read` 带行号读单篇
+
+所有引用都强制带笔记路径；找不到就明说，不会编造。
+
+**开发**：
+
+```bash
+pnpm install   # link 安装模式下必需（依赖从仓库路径解析）
+npm test       # 44 项单测
+```
 
 ## 文档导航
 
@@ -87,4 +114,4 @@ AI 干活前能查你的积累，干完活能把成果存回去，还会定期�
 
 ## License
 
-MIT（待代码落地后补充作者署名）
+MIT（作者：moqian）

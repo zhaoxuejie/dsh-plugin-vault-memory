@@ -56,3 +56,18 @@ bm25 返回负值（越小越相关），展示时取反归一。
 - `vault_read` 改为**直接从磁盘按行读**（带行号窗口），天然新鲜，不依赖 DB 缓存内容。
 - links 解析：parser 产出候选目标；store 用内存 path→id 映射解析 `resolved_note`（悬空=NULL）。
 - tokenize 单独成模块 `src/core/tokenize.mjs`（parser 不掺检索词），供 store 索引与 search 查询共用。
+
+## 8. 真机验证发现（Step 3，headless profile 实测修正）
+
+| # | 现象 | 根因 | 修正 |
+|---|---|---|---|
+| 1 | 插件加载报 `Cannot find package 'schemastery'` | `link:` 直链安装时依赖从**仓库路径**解析，仓库未跑过 `pnpm install` | 仓库内 `pnpm install`（发布安装不受影响）；README 注明开发前置步骤 |
+| 2 | 注册即炸 `unsupported JSON schema: ... required is not supported on type "string"` | `defineTool` 才会做"参数规格→JSON Schema"转换；`register(普通对象)` 原样直传。per-property `required: true` 是规格语法，不是 JSON Schema | `output.schema` 与 `parameters` 一律写**标准 JSON Schema 子集**：根 `type:"object"`、`required` 顶层数组、`items`/`additionalProperties` 按类型合法 |
+| 3 | provider 报 `Invalid schema for function 'vault_query' ... got 'type: null'` | 同上根因的另一面：无 `required` 标记的参数对象被当作"已是 JSON Schema"直传，根无 `type` | 同上（vault_query 全可选参数也显式写 `type:"object"` 根） |
+| 4 | agent 调用工具返回"未配置任何 vault"，entry `config:` 没生效 | loader 的 entry config 经 `apply(ctx, config)` 第二参数传入；settings 的分层 = schema 默认 → **base（注册时传入的入口 config）** → 用户文档 | `apply(ctx, entryConfig)` + `settings.register(name, Config, { applies:"live", base: entryConfig })` |
+
+**验收结果（headless + 真库 moqian-work）**：
+- ✅ agent 调用 `vault_search` 命中真实笔记 `tools/docker-practical-guide.md`，标题正确、标注库名 work
+- ✅ 未配置场景 agent 明确说"没有配置/找不到"，不编造笔记
+- ✅ 插件经 `dsh plugin --profile web add` 装入 web profile（下次重启生效），索引库落 `<DSH_HOME>/data/vault-memory/605069b85a6bd5eb.db`
+- 注意：`apply(ctx)` 第二参数 config 是 loader 传入的 entry config；settings 服务存在时以 `register(..., { base })` 合并，不存在时直接用它兜底。

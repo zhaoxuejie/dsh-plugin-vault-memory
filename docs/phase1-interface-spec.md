@@ -27,7 +27,7 @@ D:\projectDsh\dsh-plugin-obsidian\        ← git 仓库 = npm 包源码
 └── src\
     ├── index.mjs               # 插件入口：export name/inject/Config/apply
     ├── config.mjs              # schemastery 设置 schema + 默认值
-    ├── errors.mjs              # 统一错误词汇（HarnessError 子类 + code）
+    ├── errors.mjs              # 统一错误词汇（VaultError 子类 + code，不依赖 @deepseek-ai/*）
     ├── prompt.mjs              # 溯源约束 systemPrompt section 文案
     ├── core\                   # 纯数据层：不依赖 DSH，node:test 直测
     │   ├── vault-root.mjs      # 路径监狱（resolve/assertInside/symlink 复检）
@@ -255,8 +255,8 @@ function assertInside(root: string, abs: string): void
 ## 9. 工具接口规范（tools/*）
 
 统一约定：
-- 错误用 `HarnessError` 子类 + 稳定 code（对齐 fs-search：`VaultNotConfigured` / `VaultPathEscape` / `NoteNotFound` / `IndexNotReady` / `SearchFailed`）。
-- 输出对象 JSON-schema 风格（对齐 defineTool 的 output.schema：`additionalProperties:false`，属性带 `required:true`）。
+- 错误用 `VaultError`（`src/errors.mjs`，普通 Error 子类）携带稳定 code：`VAULT_NOT_CONFIGURED` / `VAULT_UNREADABLE` / `VAULT_PATH_ESCAPE` / `NOTE_NOT_FOUND` / `INDEX_NOT_READY` / `SEARCH_FAILED` / `INVALID_ARG`。插件不可 import `@deepseek-ai/dsh-llm` 的 HarnessError（profile 无此包）。
+- **`parameters` 与 `output.schema` 必须为标准 JSON Schema 子集**（真机校准，见 step0-calibration §8）：根 `type: "object"`、`required` 为顶层数组、`items` 只挂 array、`additionalProperties` 只挂 object。**不支持 per-property `required: true`**——那是 `defineTool` 的规格语法；普通对象 `register` 不做转换、原样直传。
 - 所有结果项必带 `path`（溯源硬约束）。
 - 返回值截断：`searchMaxResults`/`snippetChars` 受 config 控制；render 函数内拼文本，内容超限提示"结果已截断，收窄查询"。
 

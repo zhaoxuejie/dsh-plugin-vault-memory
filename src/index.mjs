@@ -17,11 +17,11 @@ export const name = "dsh-plugin-vault-memory";
 export const inject = ["tools", "settings", "systemPrompt"];
 export const Config = configSchema;
 
-export function apply(ctx) {
+export function apply(ctx, entryConfig) {
   const dshHome = process.env.DSH_HOME || path.join(os.homedir(), ".dsh");
 
   const runtime = {
-    cfg: resolveConfig(null),
+    cfg: resolveConfig(entryConfig),
     dshHome,
     indexes: new Map(), // rootAbs -> VaultIndex
     vaultKeys: [],      // [{ rootAbs, label, path, error? }]
@@ -85,19 +85,23 @@ export function apply(ctx) {
     }
   }
 
-  // --- 设置（settings 服务缺失时退回默认值，不崩） ---
+  // --- 设置（settings 服务缺失时退回默认值/入口 config，不崩） ---
+  // 分层：schema 默认 → entry config（base）→ 用户 settings.yaml（user），settings 服务负责合并。
   let unwatch = null;
   const settings = ctx.get("settings");
   if (settings && typeof settings.register === "function") {
     try {
-      const scope = settings.register(name, Config, { applies: "live" });
+      const scope = settings.register(name, Config, {
+        applies: "live",
+        base: entryConfig && typeof entryConfig === "object" ? entryConfig : undefined,
+      });
       runtime.cfg = resolveConfig(scope.get());
       unwatch = scope.watch((next) => {
         runtime.cfg = resolveConfig(next);
         rebuildIndexes();
       });
     } catch {
-      /* 注册失败 → 使用默认配置 */
+      /* 注册失败 → 使用入口 config/默认配置 */
     }
   }
 

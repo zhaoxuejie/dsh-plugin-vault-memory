@@ -1,0 +1,10 @@
+# 真机验证覆盖层（仅测试用）：挂载插件并注入 moqian-work 配置，不写入全局 settings.yaml
+- insert:
+    - id: vault-memory-verify
+      name: dsh-plugin-vault-memory
+      config:
+        enabled: true
+        vaults:
+          - path: D:\projectObsidian\moqian-work
+            label: work
+        watchIntervalMs: 60000

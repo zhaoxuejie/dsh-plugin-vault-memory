@@ -31,6 +31,7 @@
 6. **Phase 1 范围**：严格最小 —— 只做「索引 + 工具集」，不做会话记忆注入（记忆注入推迟到 Phase 2）。
 7. **索引落盘**：`~/.dsh/data/vault-memory/<vaultHash>.db`（不污染 vault、不进 Obsidian 同步）。
 8. **巡检写入授权**：逐条 approve（经 GUI 审查队列/工具确认流），无目录级预授权。
+9. **代码形态**（开工前定稿）：A 路线 —— 零构建纯 ESM（`.mjs`），源码即产物，无 lib/tsconfig/tsdown 构建链；目录按层组织（core 纯数据层 / tools 胶水层 / 后续 engine·embeddings·client），详见 phase1 规范 §1。
 
 ### 0.4 已校准的 DSH 插件 API 事实（真源码反查，2026 会话时点）
 

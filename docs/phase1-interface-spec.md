@@ -7,32 +7,42 @@
 
 ## 1. 包结构与文件清单
 
+**代码形态决策（2026-xx 已定）：A 路线 —— 零构建纯 ESM（`.mjs`）**。源码即产物，无 lib/、无 tsconfig/tsdown；写完即装即测，与 dsh-daily-digest 同款风格。目录按"层"组织，不按 Phase 分目录。
+
 ```
-D:\projectDsh\dsh-plugin-obsidian\
-├── package.json
-├── cordis.patch.yml
-├── tsconfig.json               # 仅类型检查；产物手写/tsdown 均可，先与系列内 feihualing 风格一致
-├── README.md
+D:\projectDsh\dsh-plugin-obsidian\        ← git 仓库 = npm 包源码
+├── package.json                # 插件元数据 + dsh.bundle.patch
+├── cordis.patch.yml            # Cordis 挂载声明
+├── README.md                   # 价值/痛点总览（已存在）
 ├── DESIGN.md                   # 总设计（已存在）
-├── docs\
-│   └── phase1-interface-spec.md  # 本文
+├── LICENSE                     # MIT（代码落地时补）
+├── docs\                       # 三份 Phase 规范（已存在）
+├── test\
+│   ├── fixtures\vault-a\       # 样例库（10 篇，覆盖解析全形态；入库为测试资产）
+│   ├── parser.test.mjs
+│   ├── vault-root.test.mjs
+│   ├── store.test.mjs
+│   ├── search.test.mjs
+│   └── tools.test.mjs
 └── src\
-    ├── index.ts                # 插件入口：name/inject/Config/apply
-    ├── config.ts               # schemastery 设置 schema + 默认值
-    ├── core\
-    │   ├── vault-root.ts       # vault 路径解析 + 路径监狱（resolve/contains）
-    │   ├── scanner.ts          # 启动全扫 + 轮询增量（零依赖，替代 chokidar）
-    │   ├── parser.ts           # md → 结构化（frontmatter/标题/标签/链接/纯文本）
-    │   ├── store.ts            # SQLite 打开/迁移/读写
-    │   ├── search.ts           # FTS5 查询 + 片段生成
-    │   └── index.ts            # VaultIndex 门面：scan/upsert/remove/query/search
-    └── tools\
-        ├── vault-search.ts
-        ├── vault-query.ts
-        └── vault-read.ts
+    ├── index.mjs               # 插件入口：export name/inject/Config/apply
+    ├── config.mjs              # schemastery 设置 schema + 默认值
+    ├── errors.mjs              # 统一错误词汇（HarnessError 子类 + code）
+    ├── prompt.mjs              # 溯源约束 systemPrompt section 文案
+    ├── core\                   # 纯数据层：不依赖 DSH，node:test 直测
+    │   ├── vault-root.mjs      # 路径监狱（resolve/assertInside/symlink 复检）
+    │   ├── parser.mjs          # md → 结构化（frontmatter/标题/标签/链接/纯文本）
+    │   ├── store.mjs           # SQLite 打开/迁移/读写（含 DDL）
+    │   ├── scanner.mjs         # 启动全扫 + 轮询增量 watcher（零依赖）
+    │   ├── search.mjs          # FTS5 查询 + snippet
+    │   └── index.mjs           # VaultIndex 门面：懒初始化，组合以上
+    └── tools\                  # DSH 胶水薄壳：注册工具 + 参数校验，逻辑调 core
+        ├── vault-search.mjs
+        ├── vault-query.mjs
+        └── vault-read.mjs
 ```
 
-构建产物输出到 `lib/`；`main`/`exports` 指向 `lib`。开发期可用 tsx/tsdown，或直接写 `.mjs` 减少构建链（与 dsh-daily-digest 的 `lib/index.mjs` 风格一致）——**倾向：Phase 1 直接产 ESM .mjs，省掉构建步骤**。
+后续 Phase 追加（不预建空目录）：Phase 2 → `core/distill.mjs`、`memory-inject.mjs`、`tools/vault-related.mjs|vault-capture.mjs`、`server/routes.mjs`、`client.js`（浏览器端）；Phase 3 → `engine/rules/*.mjs`、`engine/apply.mjs`、`embeddings/embedder.mjs`。
 
 ---
 
@@ -43,9 +53,9 @@ D:\projectDsh\dsh-plugin-obsidian\
   "name": "dsh-plugin-vault-memory",
   "version": "0.1.0",
   "type": "module",
-  "main": "lib/index.mjs",
-  "exports": { ".": "./lib/index.mjs", "./package.json": "./package.json" },
-  "files": ["lib", "cordis.patch.yml", "README.md", "LICENSE"],
+  "main": "src/index.mjs",                  // 零构建：源码即产物
+  "exports": { ".": "./src/index.mjs", "./package.json": "./package.json" },
+  "files": ["src", "cordis.patch.yml", "README.md", "LICENSE"],
   "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
   "dependencies": {
     "schemastery": "^3.18.0"          // ⚠️ 与 dsh-daily-digest 同款；或 @deepseek-ai/schemastery
@@ -59,7 +69,7 @@ D:\projectDsh\dsh-plugin-obsidian\
 
 **依赖策略（Phase 1）**：
 - 不用 chokidar → 自研轮询 watcher（周期 10s 默认，只 stat `.md`，59 篇量级开销可忽略；增量解析单篇）。
-- SQLite 驱动：⚠️ 第 0 步定 —— 优先宿主内置 `node:sqlite`（零原生依赖）；若不支持 FTS5 则评估 better-sqlite3。参考 `dsh-session-query-sqlite` 的实现选型保持一致。
+- SQLite 驱动：⚠️ 第 0 步定 —— 宿主 Node v22.23 的 `node:sqlite` 仍属实验（需 `--experimental-sqlite` 且宿主进程未必开），优先评估 better-sqlite3（预编译、FTS5 齐）；参考 `dsh-session-query-sqlite` 的实现选型保持一致。
 - 不引入 LLM/嵌入依赖（Phase 2 语义再进）。
 
 ---

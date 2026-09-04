@@ -10,7 +10,7 @@
   },
   "files": ["src", "cordis.patch.yml", "README.md", "LICENSE"],
   "scripts": {
-    "test": "node --test test/"
+    "test": "node test/run-all.mjs"
   },
   "keywords": ["dsh", "deepseek-harness", "obsidian", "vault", "knowledge-base", "second-brain"],
   "dsh": {

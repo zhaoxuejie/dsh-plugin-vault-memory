@@ -1,0 +1,4 @@
+# dsh-plugin-vault-memory bundle patch: 挂载 vault 记忆层插件
+- insert:
+    - id: dsh-plugin-vault-memory
+      name: dsh-plugin-vault-memory

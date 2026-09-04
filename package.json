@@ -1,0 +1,25 @@
+{
+  "name": "dsh-plugin-vault-memory",
+  "version": "0.1.0",
+  "description": "让本地 Obsidian 知识库成为 DeepSeek Harness agent 的长期记忆与工作台（Phase 1：索引 + 检索工具集）",
+  "type": "module",
+  "main": "src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": ["src", "cordis.patch.yml", "README.md", "LICENSE"],
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "keywords": ["dsh", "deepseek-harness", "obsidian", "vault", "knowledge-base", "second-brain"],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "schemastery": "^3.18.0"
+  },
+  "license": "MIT"
+}

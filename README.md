@@ -69,8 +69,9 @@ AI 干活前能查你的积累，干完活能把成果存回去，还会定期�
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | **Phase 1** | 本地索引 + Agent 工具集（`vault_search` / `vault_query` / `vault_read`） | ✅ 已实现，真机验证通过 |
-| **Phase 2** | 会话记忆注入 + 关联/捕获工具 + Web GUI 浮卡 | ✅ 主体已实现（记忆注入/`vault_related`/`vault_capture` 真机验证通过；GUI 浮卡待 web 重启后浏览器确认） |
-| **Phase 3** | 定时巡检管家 + 审查队列写回 + 语义检索（可选） | 📝 设计完成 |
+| **Phase 2** | 会话记忆注入 + 关联/捕获工具 + Web GUI 浮卡 | ✅ 已实现并真机验证（浮卡用户已确认） |
+| **Phase 3** | 定时巡检管家 + 审查队列写回 | ✅ 巡检引擎/审查写回/`vault_health` 真机验证通过（GUI 审查 tab 待重启确认） |
+| **v1.1 待办** | 语义检索（需本机 Ollama）、missing_link / duplicate / stale 规则 | 📝 设计完成 |
 
 ---
 
@@ -93,19 +94,20 @@ dsh plugin --profile web add <本仓库路径>
 - `vault_read` 带行号读单篇
 - `vault_related` 关联笔记（入链/出链/同标签/共引，带理由）
 - `vault_capture` 一键把会话产出存成笔记（自动 frontmatter + 关联建议）
+- `vault_health` 巡检报告：孤儿/断链/缺目录总览建议清单（`run=true` 立即巡检；只生成建议，绝不静默改库）
 
 所有引用都强制带笔记路径；找不到就明说，不会编造。
 
 新会话开始时会自动注入一段**记忆快照**（库状态 + 活跃项目 + 近期笔记），AI 不用从零认识你。
 
-**Web GUI**：重启 web profile 后，浏览器右下角出现「📚 知识库」胶囊 —— 浮卡含**概览**（各库健康/断链/近期更新）、**捕获**（预览→保存）、**配置**（在线增删 vault、开关注册即写入 `settings.yaml`）。
+**Web GUI**：重启 web profile 后，浏览器右下角出现「📚 知识库」胶囊 —— 浮卡含**概览**（各库健康/断链/待审数/近期更新）、**捕获**（预览→保存）、**审查**（巡检建议逐条批准/忽略，写回前自动备份可回滚）、**配置**（在线增删 vault、开关注册即写入 `settings.yaml`）。每日 03:00 自动巡检（可在设置关掉或改小时）。
 > 说明：DSH 设置页「Plugins → Plugin configuration」里的插件卡片需要第一方 React/tsdown.client 构建链（bundle purity gate 禁止第三方引用其表单模型），本插件走零构建纯 DOM 路线，故用右下角浮卡承担面板职责；配置经浮卡或直接编辑 `settings.yaml`。
 
 **开发**：
 
 ```bash
 pnpm install   # link 安装模式下必需（依赖从仓库路径解析）
-npm test       # 58 项单测
+npm test       # 69 项单测
 ```
 
 ## 文档导航

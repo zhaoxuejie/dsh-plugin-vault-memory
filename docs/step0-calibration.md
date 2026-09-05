@@ -86,4 +86,19 @@ bm25 返回负值（越小越相关），展示时取反归一。
 - ✅ 记忆注入：agent 能复述注入快照（库 work、7 篇、活跃目录 dsh插件/tools、近期笔记路径）——真实数据
 - ✅ `vault_related` 端到端执行：孤立笔记优雅返回"无关联"（moqian-work 确无链接网）
 - ✅ `vault_search` 相关度排序与片段正确（PowerShell 主题笔记第一）
-- ⏳ GUI 浮卡 / 设置卡片：client.js 已按契约打包并声明 `dsh.client.platform:web`，**需用户重启 web profile 后在浏览器验证**（本会话宿主无法重启）
+- ✅ GUI 浮卡：用户重启 web 后确认可见（曾因 client 未 `appendChild(document.body)` 成孤儿 DOM，修复 `c693de5`）
+
+## 10. Phase 3 真机校准（巡检 / 审查 / 工具输出）
+
+| # | 现象 | 根因 | 修正 |
+|---|---|---|---|
+| 1 | boot 炸 `cannot get property "timer" without inject` | 直接读未挂载的 `ctx.interval` 会触发 cordis 服务代理抛错 | 用 try/catch 包裹 `ctx.interval(...)`，失败退回原生 `setInterval`（fiber 清理由 effect dispose 承担） |
+| 2 | 工具报 `value is not lossless JSON` | 返回对象里带**显式 `undefined` 属性**（`candidates: undefined`）——`JSON.stringify` 会丢、harness 无损 JSON 校验会拒 | 工具返回一律条件赋值，禁止显式 undefined 属性（通用经验，全工具适用） |
+| 3 | review 路由找不到建议 | routes.test 的 `vaultKeys` 项没带 `index`（生产 rebuildIndexes 会挂） | 测试 fixture 补 `index` 引用；findSuggestion 扫 `k.index` |
+
+**Phase 3 验收结果（headless + moqian-work，真机）**：
+- ✅ `vault_health(run=true)`：openTotal 9（orphan 7 / broken_link 2），理由/路径真实；第二轮 run 幂等去重 0 新增；全程未改任何 vault 文件
+- ✅ 审查写回/回滚/幂等/dismiss/stats：单测覆盖（fixture 上批准→备份→回滚内容一致；moc 建→回滚删）
+- ⏳ GUI「审查」tab + 每日定时（03:00）：代码就绪，**需用户重启 web profile 后浏览器确认**
+- ⏳ 语义嵌入（v1.1）：本机 Ollama 未运行 → embedder 未落地，装好 Ollama（`nomic-embed-text`/`bge-m3`）后按 phase3 规范 §3 补实现
+- 注意：孤儿建议按规则排除 <20 字占位；moc 阈值默认 8（可配 `review.mocThreshold`）；断链候选不足时批准需显式指定目标

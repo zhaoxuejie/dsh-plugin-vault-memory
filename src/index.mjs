@@ -181,12 +181,14 @@ export function apply(ctx, entryConfig) {
         }
       }
     };
-    if (typeof ctx.interval === "function") {
+    try {
+      // ctx.interval 由 @cordisjs/plugin-timer 提供；未挂载时读取会抛 "without inject"
       return ctx.interval(tick, HOUR_MS);
+    } catch {
+      const t = setInterval(tick, HOUR_MS);
+      if (t.unref) t.unref();
+      return () => clearInterval(t);
     }
-    const t = setInterval(tick, HOUR_MS);
-    if (t.unref) t.unref();
-    return () => clearInterval(t);
   }
 
   // --- GUI 数据路由（web profile；webServer 缺失时跳过） ---

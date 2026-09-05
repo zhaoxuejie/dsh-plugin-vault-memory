@@ -73,13 +73,12 @@ export function registerVaultHealthTool(ctx, runtime) {
       }
       const stats = index.reviewStats();
       const openRows = index.ensureStore().openSuggestions({ limit: clampInt(args.limit, 50) });
-      const items = openRows.map((s) => ({
-        id: s.id,
-        kind: s.kind,
-        target: s.target,
-        reason: s.reason,
-        candidates: Array.isArray(s.payload && s.payload.candidates) ? s.payload.candidates : undefined,
-      }));
+      const items = openRows.map((s) => {
+        const it = { id: s.id, kind: s.kind, target: s.target, reason: s.reason };
+        const cand = s.payload && Array.isArray(s.payload.candidates) ? s.payload.candidates : undefined;
+        if (cand) it.candidates = cand; // 避免显式 undefined 属性（无损 JSON 校验会拒绝）
+        return it;
+      });
       return {
         vault: label,
         ran,

@@ -1,0 +1,4 @@
+# 纯挂载覆盖层（headless 验证用）：只挂载插件，vault 配置走全局 settings.yaml（moqian-work）
+- insert:
+    - id: vault-memory-verify
+      name: dsh-plugin-vault-memory

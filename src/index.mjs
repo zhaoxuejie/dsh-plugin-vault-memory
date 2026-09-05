@@ -101,7 +101,7 @@ export function apply(ctx, entryConfig) {
           opts: cfg,
         });
         runtime.indexes.set(rootAbs, idx);
-        runtime.vaultKeys.push({ rootAbs, label: v.label || undefined, path: v.path });
+        runtime.vaultKeys.push({ rootAbs, label: v.label || undefined, path: v.path, index: idx });
         idx.startWatcher(cfg.watchIntervalMs);
         // 后台首扫：不阻塞宿主启动；首个工具调用另有 ensureReady 同步兜底
         setImmediate(() => {
@@ -159,9 +159,7 @@ export function apply(ctx, entryConfig) {
         order: 120,
         text: provenancePromptText,
       }));
-    }
-    if (typeof ctx.systemPrompt.context === "function") {
-      disposers.push(registerMemoryInject(ctx, runtime));
+      disposers.push(registerMemoryInject(ctx, runtime)); // 记忆快照段（动态 provider）
     }
   }
 

@@ -71,3 +71,19 @@ bm25 返回负值（越小越相关），展示时取反归一。
 - ✅ 未配置场景 agent 明确说"没有配置/找不到"，不编造笔记
 - ✅ 插件经 `dsh plugin --profile web add` 装入 web profile（下次重启生效），索引库落 `<DSH_HOME>/data/vault-memory/605069b85a6bd5eb.db`
 - 注意：`apply(ctx)` 第二参数 config 是 loader 传入的 entry config；settings 服务存在时以 `register(..., { base })` 合并，不存在时直接用它兜底。
+
+## 9. Phase 2 真机校准（记忆注入 / GUI / 捕获）
+
+| # | 现象 | 根因 | 修正 |
+|---|---|---|---|
+| 1 | 不带 `--patch` 的 headless 运行里 agent 说"没有 vault 工具" | 手动 `pnpm add` 只装包**不挂载**；挂载来自 bundles 记录（`dsh plugin add`）或 `--patch` 覆盖层 | headless 验证一律 `--patch <overlay>`；此前"工具存在"的运行其实都带了 overlay |
+| 2 | `systemPrompt.context()` 注入的快照 agent 看不到 | context 是"user 角色动态上下文快照"，headless 组装路径未物化 | 改 `systemPrompt.section({ text: fn })` —— 函数型 text 每次组装求值，静态/函数 section 均真机验证可见 |
+| 3 | 记忆快照一直为空 | 两个叠加：a) provider 早于后台全扫完成（ready=false → 空串）；b) `runtime.vaultKeys` 项**没带 index 引用**，蒸馏永远拿不到索引 | provider 前 `waitReady`（ensureReady + 短轮询）；rebuildIndexes 把 index 挂进 vaultKeys 项 |
+| 4 | schemastery 嵌套 object 配 `.default(() => ({}))` 导致 boot 校验炸（"expected object but got () => ()"） | 该 schemastery 版本把 default 工厂当字面值校验 | 嵌套 object 不写 default，缺失由 `resolveConfig` 防御合并兜底 |
+| 5 | 功能型与静态 section 都能渲染 → 证明 bundle 插件 section 通道正常；先前"看不到"均为未挂载（见 #1） | — | — |
+
+**Phase 2 验收结果（headless + moqian-work）**：
+- ✅ 记忆注入：agent 能复述注入快照（库 work、7 篇、活跃目录 dsh插件/tools、近期笔记路径）——真实数据
+- ✅ `vault_related` 端到端执行：孤立笔记优雅返回"无关联"（moqian-work 确无链接网）
+- ✅ `vault_search` 相关度排序与片段正确（PowerShell 主题笔记第一）
+- ⏳ GUI 浮卡 / 设置卡片：client.js 已按契约打包并声明 `dsh.client.platform:web`，**需用户重启 web profile 后在浏览器验证**（本会话宿主无法重启）

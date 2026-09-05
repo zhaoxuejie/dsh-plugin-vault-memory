@@ -21,14 +21,14 @@ export const configSchema = Schema.object({
     injectEnabled: Schema.boolean().default(true),
     maxTokens: Schema.number().min(100).max(8000).default(1200),
     ttlMs: Schema.number().min(1000).default(600000),
-  }).default(() => ({})),
+  }),
   capture: Schema.object({
     defaultFolder: Schema.string().default("Captures"),
     sourceTag: Schema.string().default(""),
-  }).default(() => ({})),
+  }),
   gui: Schema.object({
     enabled: Schema.boolean().default(true),
-  }).default(() => ({})),
+  }),
 });
 
 export const DEFAULT_CONFIG = Object.freeze({

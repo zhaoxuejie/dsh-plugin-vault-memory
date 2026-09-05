@@ -116,3 +116,26 @@ test("settings POST 非法键 → 400（服务缺失时）", async () => {
   const j = JSON.parse(res.body);
   assert.equal(j.error.code, "INVALID_ARG");
 });
+
+test("review：run 产出建议、GET 列表、approve/dismiss 流转", async () => {
+  const t = routes();
+  const run = makeRes();
+  await t["/vault-memory/review"](makeReq("POST", { action: "run" }), run);
+  assert.equal(run.status, 200);
+  const jr = JSON.parse(run.body);
+  assert.equal(jr.ok, true);
+  assert.ok(Array.isArray(jr.results) && jr.results.length === 1);
+  const list = makeRes();
+  await t["/vault-memory/review"](makeReq("GET"), list);
+  assert.equal(list.status, 200);
+  const jl = JSON.parse(list.body);
+  assert.ok(Array.isArray(jl.items));
+  if (jl.items.length > 0) {
+    const first = jl.items[0];
+    const dis = makeRes();
+    await t["/vault-memory/review"](makeReq("POST", { action: "dismiss", id: first.id }), dis);
+    assert.equal(dis.status, 200);
+    const jd = JSON.parse(dis.body);
+    assert.equal(jd.ok, true);
+  }
+});

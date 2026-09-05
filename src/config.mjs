@@ -26,6 +26,11 @@ export const configSchema = Schema.object({
     defaultFolder: Schema.string().default("Captures"),
     sourceTag: Schema.string().default(""),
   }),
+  review: Schema.object({
+    enabled: Schema.boolean().default(true),
+    hour: Schema.number().min(0).max(23).default(3),
+    mocThreshold: Schema.number().min(3).default(8),
+  }),
   gui: Schema.object({
     enabled: Schema.boolean().default(true),
   }),
@@ -42,6 +47,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   dbDir: "",
   memory: { injectEnabled: true, maxTokens: 1200, ttlMs: 600000 },
   capture: { defaultFolder: "Captures", sourceTag: "" },
+  review: { enabled: true, hour: 3, mocThreshold: 8 },
   gui: { enabled: true },
 });
 
@@ -50,6 +56,7 @@ export function resolveConfig(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
   const mem = { ...DEFAULT_CONFIG.memory, ...(src.memory && typeof src.memory === "object" ? src.memory : {}) };
   const cap = { ...DEFAULT_CONFIG.capture, ...(src.capture && typeof src.capture === "object" ? src.capture : {}) };
+  const rev = { ...DEFAULT_CONFIG.review, ...(src.review && typeof src.review === "object" ? src.review : {}) };
   const gui = { ...DEFAULT_CONFIG.gui, ...(src.gui && typeof src.gui === "object" ? src.gui : {}) };
   return {
     enabled: src.enabled !== false,
@@ -71,6 +78,11 @@ export function resolveConfig(raw) {
     capture: {
       defaultFolder: typeof cap.defaultFolder === "string" ? cap.defaultFolder : DEFAULT_CONFIG.capture.defaultFolder,
       sourceTag: typeof cap.sourceTag === "string" ? cap.sourceTag : "",
+    },
+    review: {
+      enabled: rev.enabled !== false,
+      hour: clampInt(rev.hour, DEFAULT_CONFIG.review.hour, 0, 23),
+      mocThreshold: clampInt(rev.mocThreshold, DEFAULT_CONFIG.review.mocThreshold, 3, 100),
     },
     gui: { enabled: gui.enabled !== false },
   };

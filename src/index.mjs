@@ -14,6 +14,7 @@ import { registerVaultQueryTool } from "./tools/vault-query.mjs";
 import { registerVaultReadTool } from "./tools/vault-read.mjs";
 import { registerVaultRelatedTool } from "./tools/vault-related.mjs";
 import { registerVaultCaptureTool } from "./tools/vault-capture.mjs";
+import { registerVaultHealthTool } from "./tools/vault-health.mjs";
 import { registerMemoryInject, invalidateMemoryCache } from "./memory-inject.mjs";
 import { registerVaultRoutes } from "./server/routes.mjs";
 
@@ -151,6 +152,7 @@ export function apply(ctx, entryConfig) {
     disposers.push(registerVaultReadTool(ctx, runtime));
     disposers.push(registerVaultRelatedTool(ctx, runtime));
     disposers.push(registerVaultCaptureTool(ctx, runtime));
+    disposers.push(registerVaultHealthTool(ctx, runtime));
   }
   if (ctx.systemPrompt) {
     if (typeof ctx.systemPrompt.section === "function") {
@@ -161,6 +163,30 @@ export function apply(ctx, entryConfig) {
       }));
       disposers.push(registerMemoryInject(ctx, runtime)); // 记忆快照段（动态 provider）
     }
+  }
+
+  // --- 每日定时巡检（review.enabled 时；ctx.interval 优先，缺失退回原生 setInterval） ---
+  function scheduleDailyReview() {
+    const HOUR_MS = 3600 * 1000;
+    const tick = () => {
+      const cfg = runtime.cfg;
+      if (!cfg.enabled || !cfg.review.enabled) return;
+      if (new Date().getHours() !== cfg.review.hour) return;
+      for (const k of runtime.vaultKeys) {
+        if (k.error || !k.index || !k.index.ready) continue;
+        try {
+          k.index.reviewRun({ mocThreshold: cfg.review.mocThreshold });
+        } catch {
+          /* 单库巡检失败不影响其他库 */
+        }
+      }
+    };
+    if (typeof ctx.interval === "function") {
+      return ctx.interval(tick, HOUR_MS);
+    }
+    const t = setInterval(tick, HOUR_MS);
+    if (t.unref) t.unref();
+    return () => clearInterval(t);
   }
 
   // --- GUI 数据路由（web profile；webServer 缺失时跳过） ---
@@ -177,6 +203,7 @@ export function apply(ctx, entryConfig) {
   }
 
   rebuildIndexes();
+  disposers.push(scheduleDailyReview());
 
   ctx.effect(() => () => {
     if (typeof unwatch === "function") unwatch();

@@ -8,7 +8,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { tokenizeText } from "./tokenize.mjs";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS notes (
@@ -50,6 +50,40 @@ CREATE TABLE IF NOT EXISTS links (
 CREATE INDEX IF NOT EXISTS links_from_idx ON links(from_note);
 CREATE INDEX IF NOT EXISTS links_resolved_idx ON links(resolved_note);
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
+
+-- Phase 3：巡检建议 / 健康快照 /（预留）章节与向量
+CREATE TABLE IF NOT EXISTS suggestions (
+  id          INTEGER PRIMARY KEY,
+  kind        TEXT NOT NULL,                 -- orphan | broken_link | moc_draft | ...
+  target      TEXT NOT NULL,                 -- 主对象 vault 相对路径（写回定位用）
+  reason      TEXT NOT NULL,
+  payload     TEXT NOT NULL,                 -- JSON（结构性载荷；写回前塞入 backup）
+  status      TEXT NOT NULL DEFAULT 'open',  -- open|approved|dismissed|applied|reverted
+  run_at      INTEGER NOT NULL,
+  resolved_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS suggestions_open_idx ON suggestions(status, kind);
+CREATE TABLE IF NOT EXISTS health_snapshots (
+  id      INTEGER PRIMARY KEY,
+  at      INTEGER NOT NULL,
+  metrics TEXT NOT NULL                      -- JSON
+);
+CREATE INDEX IF NOT EXISTS health_snapshots_at_idx ON health_snapshots(at);
+CREATE TABLE IF NOT EXISTS sections (
+  note_id    INTEGER NOT NULL,
+  seq        INTEGER NOT NULL,
+  heading    TEXT NOT NULL DEFAULT '',
+  text       TEXT NOT NULL,
+  PRIMARY KEY (note_id, seq)
+);
+CREATE TABLE IF NOT EXISTS embeddings (
+  note_id    INTEGER NOT NULL,
+  seq        INTEGER NOT NULL,
+  model      TEXT NOT NULL,
+  dim        INTEGER NOT NULL,
+  vec        BLOB NOT NULL,
+  PRIMARY KEY (note_id, seq, model)
+);
 `;
 
 export class VaultStore {
@@ -334,6 +368,101 @@ export class VaultStore {
     ).all();
   }
 
+  /** 孤儿候选：无任何入链（resolved 指向它）的非空笔记路径。 */
+  orphanCandidates() {
+    return this.db.prepare(
+      `SELECT n.path, n.title, n.folder, n.word_count, n.mtime_ms FROM notes n
+       WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.resolved_note = n.id)
+       ORDER BY n.mtime_ms DESC`,
+    ).all().map((r) => ({ path: r.path, title: r.title, folder: r.folder, wordCount: Number(r.word_count) }));
+  }
+
+  /** 每文件夹笔记数（MOC 判定用）：[{ folder, count }]（folder 非空）。 */
+  folderCounts() {
+    return this.db.prepare(
+      `SELECT folder, COUNT(*) AS count FROM notes WHERE folder <> '' GROUP BY folder HAVING count > 0 ORDER BY count DESC`,
+    ).all().map((r) => ({ folder: r.folder, count: Number(r.count) }));
+  }
+
+  /** 该目录下已有同名/README 索引笔记？ */
+  hasIndexNote(folder) {
+    const candidates = [`${folder}.md`, `${folder}/README.md`, `${folder}/index.md`];
+    for (const c of candidates) {
+      if (this.getNote(c)) return c;
+    }
+    return null;
+  }
+
+  // ---- suggestions 表 ----
+  /** 已 open 的同 kind+target 建议数（防重复）；返回 id 或 null。 */
+  findOpenSuggestion(kind, target) {
+    const row = this.db.prepare(
+      "SELECT id FROM suggestions WHERE kind = ? AND target = ? AND status = 'open' LIMIT 1",
+    ).get(kind, target);
+    return row ? Number(row.id) : null;
+  }
+
+  /** 批量插入建议（事务）。 */
+  insertSuggestions(drafts) {
+    if (drafts.length === 0) return 0;
+    const stmt = this.db.prepare(
+      "INSERT INTO suggestions (kind, target, reason, payload, run_at) VALUES (?, ?, ?, ?, ?)",
+    );
+    const now = Date.now();
+    this.db.exec("BEGIN");
+    try {
+      for (const d of drafts) stmt.run(d.kind, d.target, d.reason, JSON.stringify(d.payload ?? {}), now);
+      this.db.exec("COMMIT");
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
+    }
+    return drafts.length;
+  }
+
+  /** 打开的建议列表。 */
+  openSuggestions({ kind, limit = 100 } = {}) {
+    const where = ["status = 'open'"];
+    const params = [];
+    if (kind) {
+      where.push("kind = ?");
+      params.push(kind);
+    }
+    return this.db.prepare(
+      `SELECT * FROM suggestions WHERE ${where.join(" AND ")} ORDER BY run_at DESC, id LIMIT ?`,
+    ).all(...params, limit).map(rowToSuggestion);
+  }
+
+  /** 取单条建议（任意状态）。 */
+  getSuggestion(id) {
+    const row = this.db.prepare("SELECT * FROM suggestions WHERE id = ?").get(Number(id));
+    return row ? rowToSuggestion(row) : undefined;
+  }
+
+  /** 更新建议状态与载荷（approve 时写入 payload.backup）。 */
+  setSuggestion(id, { status, payload }) {
+    const cur = this.getSuggestion(id);
+    if (!cur) return false;
+    this.db.prepare("UPDATE suggestions SET status = ?, payload = ?, resolved_at = ? WHERE id = ?")
+      .run(status ?? cur.status, JSON.stringify(payload ?? cur.payload), Date.now(), Number(id));
+    return true;
+  }
+
+  /** 清空 open 建议（重建巡检用）。 */
+  clearOpenSuggestions() {
+    this.db.prepare("DELETE FROM suggestions WHERE status = 'open'").run();
+  }
+
+  // ---- health_snapshots ----
+  addHealthSnapshot(metrics) {
+    this.db.prepare("INSERT INTO health_snapshots (at, metrics) VALUES (?, ?)").run(Date.now(), JSON.stringify(metrics));
+  }
+
+  recentHealthSnapshots(limit = 14) {
+    return this.db.prepare("SELECT * FROM health_snapshots ORDER BY at DESC LIMIT ?")
+      .all(limit).map((r) => ({ at: Number(r.at), metrics: JSON.parse(r.metrics) }));
+  }
+
   noteCount() {
     return Number(this.db.prepare("SELECT COUNT(*) AS n FROM notes").get().n);
   }
@@ -345,4 +474,17 @@ export class VaultStore {
       /* 已关闭 */
     }
   }
+}
+
+function rowToSuggestion(r) {
+  return {
+    id: Number(r.id),
+    kind: r.kind,
+    target: r.target,
+    reason: r.reason,
+    payload: JSON.parse(r.payload),
+    status: r.status,
+    runAt: Number(r.run_at),
+    resolvedAt: r.resolved_at === null ? null : Number(r.resolved_at),
+  };
 }

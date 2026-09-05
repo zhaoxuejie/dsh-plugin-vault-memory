@@ -15,6 +15,7 @@ window.__ModuleLoader__.load({
     var SETTINGS_PATH = "/vault-memory/settings";
     var CAPTURE_PREVIEW = "/vault-memory/capture/preview";
     var CAPTURE_COMMIT = "/vault-memory/capture/commit";
+    var REVIEW_PATH = "/vault-memory/review";
     var POLL_MS = 20000;
     var HIDE_KEY = "dsh-plugin-vault-memory:hidden";
     var ATTR = "data-vm";
@@ -97,7 +98,8 @@ window.__ModuleLoader__.load({
       var tabOverview = el("div", { "data-vm": "tab", class: "vm-tab vm-on" }, ["概览"]);
       var tabCapture = el("div", { "data-vm": "tab", class: "vm-tab" }, ["捕获"]);
       var tabConfig = el("div", { "data-vm": "tab", class: "vm-tab" }, ["配置"]);
-      tabsBar.append(tabOverview, tabCapture, tabConfig);
+      var tabReview = el("div", { "data-vm": "tab", class: "vm-tab" }, ["审查"]);
+      tabsBar.append(tabOverview, tabCapture, tabConfig, tabReview);
       panel.appendChild(tabsBar);
 
       var bodyBox = el("div", { style: "padding:10px 12px 14px;max-height:60vh;overflow:auto;" });
@@ -129,6 +131,7 @@ window.__ModuleLoader__.load({
           }
           var line = "已索引 " + v.notes + " 篇笔记";
           if (v.brokenLinks > 0) line += " · 断链 " + v.brokenLinks;
+          if (v.reviewOpen > 0) line += " · 待审 " + v.reviewOpen;
           if (v.recent && v.recent.length) line += " · 近 7 天 " + v.recent.length + " 篇更新";
           healthBox.appendChild(el("div", { class: "vm-item" }, [line]));
           (v.recent || []).slice(0, 5).forEach(function (r) {
@@ -322,26 +325,103 @@ window.__ModuleLoader__.load({
       cfgBox.appendChild(cfgMsg);
       loadConfig();
 
+      // ================= 审查（Phase 3） =================
+      var reviewBox = el("div", null, []);
+      var reviewMsg = el("div", {}, []);
+
+      function actionReview(id, action, extra) {
+        var payload = { action: action, id: id };
+        if (extra) for (var k in extra) payload[k] = extra[k];
+        return fetchJson(REVIEW_PATH, "POST", payload);
+      }
+
+      function renderReview(items) {
+        reviewBox.textContent = "";
+        reviewMsg.textContent = "";
+        if (!items.length) {
+          reviewBox.appendChild(el("div", { class: "vm-item" }, ["暂无待审建议。点「立即巡检」扫描孤儿/断链/缺目录总览。"]));
+          return;
+        }
+        items.forEach(function (s) {
+          var card = el("div", { style: "border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:8px;margin:6px 0;" });
+          card.appendChild(el("div", { class: "vm-item", style: "border:none;font-weight:700;" }, ["[" + s.kind + "] " + s.target + "（" + s.vault + "）"]));
+          card.appendChild(el("div", { class: "vm-item", style: "border:none;font-size:11px;opacity:.8;" }, [s.reason]));
+          var btnRow = el("div", { class: "vm-row", style: "margin-top:6px;" });
+          var approve = el("button", { class: "vm-btn vm-primary" }, ["批准"]);
+          approve.addEventListener("click", function () {
+            approve.disabled = true;
+            actionReview(s.id, "approve")
+              .then(function () { reviewMsg.textContent = "已批准并写回。"; loadReview(); })
+              .catch(function (e) { reviewMsg.textContent = "批准失败：" + e.message; approve.disabled = false; });
+          });
+          var dismiss = el("button", { class: "vm-btn" }, ["忽略"]);
+          dismiss.addEventListener("click", function () {
+            actionReview(s.id, "dismiss")
+              .then(function () { reviewMsg.textContent = "已忽略。"; loadReview(); })
+              .catch(function (e) { reviewMsg.textContent = "忽略失败：" + e.message; });
+          });
+          btnRow.append(approve, dismiss);
+          card.appendChild(btnRow);
+          reviewBox.appendChild(card);
+        });
+        reviewBox.appendChild(reviewMsg);
+      }
+
+      function loadReview() {
+        fetchJson(REVIEW_PATH)
+          .then(function (j) {
+            renderReview(j.items || []);
+          })
+          .catch(function (e) {
+            reviewBox.textContent = "";
+            reviewBox.appendChild(el("div", { class: "vm-item" }, ["读取失败：" + e.message]));
+          });
+      }
+
+      var reviewRunBtn = el("button", { class: "vm-btn vm-primary" }, ["立即巡检"]);
+      reviewRunBtn.addEventListener("click", function () {
+        reviewRunBtn.disabled = true;
+        fetchJson(REVIEW_PATH, "POST", { action: "run" })
+          .then(function (j) {
+            var sum = (j.results || []).map(function (r) {
+              return r.vault + (r.error ? " 出错" : " +" + r.inserted);
+            }).join("、");
+            reviewMsg.textContent = "巡检完成：" + (sum || "无");
+            loadReview();
+          })
+          .catch(function (e) { reviewMsg.textContent = "巡检失败：" + e.message; })
+          .finally(function () { reviewRunBtn.disabled = false; });
+      });
+      var reviewTop = el("div", { class: "vm-row", style: "justify-content:space-between;" });
+      reviewTop.append(reviewRunBtn);
+      reviewBox.appendChild(reviewTop);
+
       // ================= tab 切换 =================
-      var boxes = { overview: healthBox, capture: capBox, config: cfgBox };
+      var boxes = { overview: healthBox, capture: capBox, config: cfgBox, review: reviewBox };
       bodyBox.appendChild(capBox);
       bodyBox.appendChild(cfgBox);
+      bodyBox.appendChild(reviewBox);
       capBox.style.display = "none";
       cfgBox.style.display = "none";
+      reviewBox.style.display = "none";
 
       function showTab(which) {
         tabOverview.classList.toggle("vm-on", which === "overview");
         tabCapture.classList.toggle("vm-on", which === "capture");
         tabConfig.classList.toggle("vm-on", which === "config");
+        tabReview.classList.toggle("vm-on", which === "review");
         boxes.overview.style.display = which === "overview" ? "" : "none";
         boxes.capture.style.display = which === "capture" ? "" : "none";
         boxes.config.style.display = which === "config" ? "" : "none";
+        boxes.review.style.display = which === "review" ? "" : "none";
         if (which === "capture") refreshHealth();
         if (which === "config") loadConfig();
+        if (which === "review") loadReview();
       }
       tabOverview.addEventListener("click", function () { showTab("overview"); });
       tabCapture.addEventListener("click", function () { showTab("capture"); });
       tabConfig.addEventListener("click", function () { showTab("config"); });
+      tabReview.addEventListener("click", function () { showTab("review"); });
 
       // ================= 收起 / 展开 / 清理 =================
       var hidden = false;

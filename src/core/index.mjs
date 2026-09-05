@@ -10,6 +10,8 @@ import { scanVaultFiles, diffScans } from "./scanner.mjs";
 import { parseMarkdown } from "./parser.mjs";
 import { VaultStore } from "./store.mjs";
 import { searchVault } from "./search.mjs";
+import { runReview, dedupeOpen } from "../engine/rules.mjs";
+import { applySuggestion as applySuggestionImpl, revertSuggestion as revertSuggestionImpl } from "../engine/apply.mjs";
 import { vaultError, VAULT_ERROR_CODES as C } from "../errors.mjs";
 
 export class VaultIndex {
@@ -316,6 +318,91 @@ export class VaultIndex {
   stats() {
     if (!this.ready) return { notes: 0, ready: false, errors: this.scanErrors.length };
     return { notes: this.ensureStore().noteCount(), ready: true, errors: this.scanErrors.length };
+  }
+
+  // ============ 原文件读写（审查写回用；全部经路径监狱） ============
+
+  /** 读原始 md（含路径校验）。返回 { exists, text }。 */
+  readRawNote(rel) {
+    const abs = resolveInside(this.rootAbs, rel);
+    if (!fs.existsSync(abs)) return { exists: false, text: "" };
+    return { exists: true, text: fs.readFileSync(abs, "utf8") };
+  }
+
+  /** 原子写 md 并立即重解析入库（审查写回与捕获共用语义）。 */
+  writeRawNote(rel, text) {
+    const abs = resolveInside(this.rootAbs, rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    const tmp = abs + ".tmp";
+    fs.writeFileSync(tmp, text, "utf8");
+    fs.renameSync(tmp, abs);
+    const stat = fs.statSync(abs);
+    const parsed = parseMarkdown(text, rel);
+    this.ensureStore().upsertNote(parsed, stat.mtimeMs);
+    if (this.lastScan) this.lastScan.set(rel, { mtimeMs: stat.mtimeMs, size: stat.size });
+    this.ensureStore().refreshLinks();
+  }
+
+  /** 删除由本插件创建的文件（仅 moc 回滚用）。 */
+  removeRawNote(rel) {
+    const abs = resolveInside(this.rootAbs, rel);
+    if (fs.existsSync(abs)) fs.unlinkSync(abs);
+    this.ensureStore().removeNote(rel);
+    if (this.lastScan) this.lastScan.delete(rel);
+  }
+
+  // ============ 巡检（Phase 3） ============
+
+  /**
+   * 跑一轮巡检并入库建议。
+   * @param {{ kinds?: string[] }} opts
+   * @returns {{ inserted: number, drafts: number, byKind: Record<string, number> }}
+   */
+  reviewRun(opts = {}) {
+    this.ensureReady();
+    const store = this.ensureStore();
+    const { drafts } = runReview(store, opts);
+    const fresh = dedupeOpen(store, drafts);
+    const inserted = store.insertSuggestions(fresh);
+    const byKind = {};
+    for (const d of fresh) byKind[d.kind] = (byKind[d.kind] ?? 0) + 1;
+    store.addHealthSnapshot({ notes: store.noteCount(), inserted });
+    return { inserted, drafts: fresh.length, byKind };
+  }
+
+  /** open 建议统计 + 最近健康快照。 */
+  reviewStats() {
+    const store = this.ensureStore();
+    const rows = store.openSuggestions({ limit: 1000 });
+    const open = {};
+    for (const r of rows) open[r.kind] = (open[r.kind] ?? 0) + 1;
+    return { open, openTotal: rows.length, snapshots: store.recentHealthSnapshots(14) };
+  }
+
+  /** 批准一条建议（写回）。 */
+  applySuggestion(id, opts) {
+    this.ensureReady();
+    const sug = this.ensureStore().getSuggestion(id);
+    if (!sug) throw vaultError(C.NOTE_NOT_FOUND, `建议不存在: ${id}`);
+    return applySuggestionImpl(this, sug, opts);
+  }
+
+  /** 回滚一条建议。 */
+  revertSuggestion(id) {
+    this.ensureReady();
+    const sug = this.ensureStore().getSuggestion(id);
+    if (!sug) throw vaultError(C.NOTE_NOT_FOUND, `建议不存在: ${id}`);
+    return revertSuggestionImpl(this, sug);
+  }
+
+  /** 忽略/驳回一条建议。 */
+  dismissSuggestion(id, reason) {
+    const store = this.ensureStore();
+    const sug = store.getSuggestion(id);
+    if (!sug) throw vaultError(C.NOTE_NOT_FOUND, `建议不存在: ${id}`);
+    if (sug.status !== "open") return { ok: false, message: `建议已是 ${sug.status}` };
+    store.setSuggestion(id, { status: "dismissed", payload: { ...sug.payload, dismissReason: reason || null } });
+    return { ok: true, message: `已忽略: ${sug.target}` };
   }
 
   close() {

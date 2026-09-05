@@ -37,10 +37,27 @@ function vaultSummary(runtime, key) {
   if (key.error) return { ...base, ready: false, error: key.error, notes: 0, brokenLinks: 0, recent: [] };
   if (!idx) return { ...base, ready: false, error: "index missing", notes: 0, brokenLinks: 0, recent: [] };
   try {
-    return { ...base, ...idx.health(), error: idx.scanErrors.length > 0 ? `${idx.scanErrors.length} 篇解析失败` : null };
+    const h = idx.health();
+    let reviewOpen = 0;
+    try {
+      reviewOpen = idx.reviewStats().openTotal;
+    } catch {
+      /* 老库无建议表等：忽略 */
+    }
+    return { ...base, ...h, reviewOpen, error: idx.scanErrors.length > 0 ? `${idx.scanErrors.length} 篇解析失败` : null };
   } catch (e) {
     return { ...base, ready: false, error: String(e && e.message ? e.message : e), notes: 0, brokenLinks: 0, recent: [] };
   }
+}
+
+/** 在已配库中定位建议所属的 index 与行。 */
+function findSuggestion(runtime, id) {
+  for (const k of runtime.vaultKeys) {
+    if (k.error || !k.index) continue;
+    const sug = k.index.ensureStore().getSuggestion(id);
+    if (sug) return { label: k.label || k.path, index: k.index, sug };
+  }
+  return null;
 }
 
 /** 注册全部 /vault-memory/* 路由。 */
@@ -137,5 +154,87 @@ export function registerVaultRoutes(webServer, runtime) {
     kind: "exact",
     path: "/vault-memory/capture/commit",
     handler: (req, res) => handleCapture(req, res, true),
+  });
+
+  // ---------- 审查队列（Phase 3） ----------
+
+  webServer.register({
+    kind: "exact",
+    path: "/vault-memory/review",
+    handler: async (req, res) => {
+      if (req.method === "POST") {
+        let body;
+        try {
+          body = await readJson(req);
+        } catch {
+          return json(res, 400, { error: { code: "INVALID_ARG", message: "请求体不是合法 JSON" } });
+        }
+        const action = body.action;
+        if (action === "run") {
+          const kinds = Array.isArray(body.kinds) ? body.kinds.map(String) : undefined;
+          const targets = body.vault
+            ? [(() => { try { return runtime.resolveVault(body.vault); } catch { return null; } })()].filter(Boolean)
+            : runtime.vaultKeys.filter((k) => !k.error && k.index && k.index.ready).map((k) => ({ label: k.label || k.path, index: k.index }));
+          const results = [];
+          for (const t of targets) {
+            try {
+              const r = t.index.reviewRun({ kinds, mocThreshold: runtime.cfg.review.mocThreshold });
+              results.push({ vault: t.label, ...r });
+            } catch (e) {
+              results.push({ vault: t.label, error: e.message });
+            }
+          }
+          return json(res, 200, { ok: true, results });
+        }
+        const id = Number(body.id);
+        if (!Number.isFinite(id)) return json(res, 400, { error: { code: "INVALID_ARG", message: "缺 id" } });
+        const found = findSuggestion(runtime, id);
+        if (!found) return json(res, 404, { error: { code: "NOTE_NOT_FOUND", message: `建议不存在: ${id}` } });
+        try {
+          let out;
+          if (action === "approve") {
+            out = found.index.applySuggestion(id, {
+              links: Array.isArray(body.links) ? body.links.map(String) : undefined,
+              target: typeof body.target === "string" ? body.target : undefined,
+            });
+          } else if (action === "dismiss") {
+            out = found.index.dismissSuggestion(id, typeof body.reason === "string" ? body.reason : undefined);
+          } else if (action === "revert") {
+            out = found.index.revertSuggestion(id);
+          } else {
+            return json(res, 400, { error: { code: "INVALID_ARG", message: `未知 action: ${action}` } });
+          }
+          return json(res, 200, { ok: true, vault: found.label, ...out });
+        } catch (e) {
+          const code = e.code || "INTERNAL";
+          const status = code === "NOTE_EXISTS" || code === "NOTE_NOT_FOUND" ? 409 : code === "INVALID_ARG" ? 400 : 500;
+          return json(res, status, { ok: false, error: { code, message: e.message } });
+        }
+      }
+      // GET：open 建议列表
+      const kind = typeof req.url === "string" ? null : null; // 参数在 path 上；默认全部
+      const limit = 100;
+      const out = [];
+      for (const k of runtime.vaultKeys) {
+        if (k.error || !k.index) continue;
+        try {
+          const rows = k.index.ensureStore().openSuggestions({ kind: kind || undefined, limit });
+          for (const s of rows) {
+            out.push({
+              id: s.id,
+              vault: k.label || k.path,
+              kind: s.kind,
+              target: s.target,
+              reason: s.reason,
+              payload: s.payload,
+              runAt: s.runAt,
+            });
+          }
+        } catch {
+          /* 单库失败跳过 */
+        }
+      }
+      json(res, 200, { ok: true, items: out });
+    },
   });
 }

@@ -117,6 +117,7 @@ npm test       # 76 项单测
 ## 文档导航
 
 - [`DESIGN.md`](DESIGN.md) — 总设计：定位、真实 vault 勘察结论、产品决策、DSH 插件架构事实、分阶段路线
+- [`docs/usage-guide.md`](docs/usage-guide.md) — **使用教程（新手从这里开始）**
 - [`docs/phase1-interface-spec.md`](docs/phase1-interface-spec.md) — Phase 1 接口规范（索引 + 工具集）
 - [`docs/phase2-interface-spec.md`](docs/phase2-interface-spec.md) — Phase 2 接口规范（记忆注入 + GUI + 捕获）
 - [`docs/phase3-interface-spec.md`](docs/phase3-interface-spec.md) — Phase 3 接口规范（巡检引擎 + 语义检索）

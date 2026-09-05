@@ -70,8 +70,9 @@ AI 干活前能查你的积累，干完活能把成果存回去，还会定期�
 |---|---|---|
 | **Phase 1** | 本地索引 + Agent 工具集（`vault_search` / `vault_query` / `vault_read`） | ✅ 已实现，真机验证通过 |
 | **Phase 2** | 会话记忆注入 + 关联/捕获工具 + Web GUI 浮卡 | ✅ 已实现并真机验证（浮卡用户已确认） |
-| **Phase 3** | 定时巡检管家 + 审查队列写回 | ✅ 巡检引擎/审查写回/`vault_health` 真机验证通过（GUI 审查 tab 待重启确认） |
-| **v1.1 待办** | 语义检索（需本机 Ollama）、missing_link / duplicate / stale 规则 | 📝 设计完成 |
+| **Phase 3** | 定时巡检管家 + 审查队列写回 | ✅ 已实现并真机验证（GUI 审查 tab 重启后可用） |
+| **v1.1** | 语义检索（Ollama bge-m3）+ GUI 增强（候选选择/趋势/Obsidian 打开） | ✅ 已实现并真机验证（76/76 单测） |
+| **后续待办** | missing_link / duplicate / stale 巡检规则（复用嵌入）| 📝 设计完成 |
 
 ---
 
@@ -92,6 +93,7 @@ dsh plugin --profile web add <本仓库路径>
 - `vault_search` 全文检索（中文 bigram 分词 + 短查询子串兜底）
 - `vault_query` 结构化查询（目录/标签/时间/frontmatter）
 - `vault_read` 带行号读单篇
+- `vault_search` 支持 `mode=fts`/`semantic`/`hybrid`（语义依赖本机 Ollama + bge-m3，不可用时自动回退全文）
 - `vault_related` 关联笔记（入链/出链/同标签/共引，带理由）
 - `vault_capture` 一键把会话产出存成笔记（自动 frontmatter + 关联建议）
 - `vault_health` 巡检报告：孤儿/断链/缺目录总览建议清单（`run=true` 立即巡检；只生成建议，绝不静默改库）
@@ -100,14 +102,16 @@ dsh plugin --profile web add <本仓库路径>
 
 新会话开始时会自动注入一段**记忆快照**（库状态 + 活跃项目 + 近期笔记），AI 不用从零认识你。
 
-**Web GUI**：重启 web profile 后，浏览器右下角出现「📚 知识库」胶囊 —— 浮卡含**概览**（各库健康/断链/待审数/近期更新）、**捕获**（预览→保存）、**审查**（巡检建议逐条批准/忽略，写回前自动备份可回滚）、**配置**（在线增删 vault、开关注册即写入 `settings.yaml`）。每日 03:00 自动巡检（可在设置关掉或改小时）。
+**Web GUI**：重启 web profile 后，浏览器右下角出现「📚 知识库」胶囊 —— 浮卡含**概览**（各库健康/断链/待审数/待审趋势/语义状态/近期更新）、**捕获**（预览→保存，成功后可在 Obsidian 打开）、**审查**（巡检建议逐条批准/忽略；孤儿可勾选要关联的笔记、断链可下拉选修复目标；写回前自动备份可回滚）、**配置**（在线增删 vault、开关注册即写入 `settings.yaml`）。每日 03:00 自动巡检（可在设置关掉或改小时）。
 > 说明：DSH 设置页「Plugins → Plugin configuration」里的插件卡片需要第一方 React/tsdown.client 构建链（bundle purity gate 禁止第三方引用其表单模型），本插件走零构建纯 DOM 路线，故用右下角浮卡承担面板职责；配置经浮卡或直接编辑 `settings.yaml`。
+
+**语义检索**：本机 Ollama（`ollama pull bge-m3`）运行且配置 `embed.enabled=true` 后，新笔记自动分块嵌入；首轮全量嵌入按库大小需数十秒到数分钟（概览会显示覆盖进度与"语义检索就绪"）。
 
 **开发**：
 
 ```bash
 pnpm install   # link 安装模式下必需（依赖从仓库路径解析）
-npm test       # 69 项单测
+npm test       # 76 项单测
 ```
 
 ## 文档导航

@@ -99,6 +99,18 @@ bm25 返回负值（越小越相关），展示时取反归一。
 **Phase 3 验收结果（headless + moqian-work，真机）**：
 - ✅ `vault_health(run=true)`：openTotal 9（orphan 7 / broken_link 2），理由/路径真实；第二轮 run 幂等去重 0 新增；全程未改任何 vault 文件
 - ✅ 审查写回/回滚/幂等/dismiss/stats：单测覆盖（fixture 上批准→备份→回滚内容一致；moc 建→回滚删）
-- ⏳ GUI「审查」tab + 每日定时（03:00）：代码就绪，**需用户重启 web profile 后浏览器确认**
-- ⏳ 语义嵌入（v1.1）：本机 Ollama 未运行 → embedder 未落地，装好 Ollama（`nomic-embed-text`/`bge-m3`）后按 phase3 规范 §3 补实现
+- ✅ GUI「审查」tab + 每日定时（03:00）：代码就绪，用户重启 web 后已可用（审查候选选择/趋势/Obsidian 打开随 v1.1 一并落地）
+- ✅ 语义嵌入（v1.1，本机 Ollama 0.30.10 + bge-m3）：embedder/分块/向量入库/RRF hybrid/`vault_search.mode` 全部落地
 - 注意：孤儿建议按规则排除 <20 字占位；moc 阈值默认 8（可配 `review.mocThreshold`）；断链候选不足时批准需显式指定目标
+
+## 11. v1.1 语义检索校准（Ollama bge-m3 实测）
+
+| # | 现象/结论 | 处理 |
+|---|---|---|
+| 1 | Ollama API：`POST /api/embed {model, input:[...]}` → `{embeddings}`，bge-m3 dim=1024 | 按此实现 `core/embed.mjs`（批量 ≤ batchSize、AbortSignal 超时、不可达抛 `EMBED_UNAVAILABLE`）|
+| 2 | 首次全量嵌入耗时远超直觉（本机 bge-m3 CPU：38 块分批可能 >2 分钟） | 默认 batchSize 8 / timeoutMs 120s；`refreshEmbeddingsAsync` 异步执行不阻塞 boot/扫描；查询遇缺失先等补一次 |
+| 3 | 半程嵌入下 semantic 检索会"漏"未嵌入笔记（与 fts 0 命中叠加极易误判） | 语义状态（`semanticState`）上报 coveredNotes 给 UI/工具；建议首次启用后等一轮全量补嵌完成再依赖语义结果 |
+| 4 | 多词 FTS 查询=AND → 术语不齐必然 0（"终端/技巧"缺词） | 正常语义；语义/hybrid 在此类词面差场景有真实增益（实测命中 cmd-vs-powershell 62.91 居首） |
+| 5 | 编辑 settings.yaml 易产生重复顶层段（先后两次 append） | 教训：合并段用脚本按顶层键分节重建，勿盲 append；本项目已加"段级合并"工具脚本模式 |
+
+**v1.1 验收（真实 moqian-work）**：全量补嵌 38 块、7/7 篇覆盖；`mode=semantic` 查询"Windows 命令行与终端脚本"→ `tools/cmd-vs-powershell.md` 居首（62.91）；`hybrid` 同查询该篇仍第一（3.25 RRF）。单测 76/76（含 mock embedder：分块/补嵌幂等/semantic 命中/hybrid/embedder 故障回退 fts/RRF）。

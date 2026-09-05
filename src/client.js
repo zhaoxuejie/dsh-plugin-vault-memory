@@ -365,6 +365,15 @@ window.__ModuleLoader__.load({
       });
       syncHidden();
 
+      // ================= 挂载到页面 =================
+      function mount() {
+        if (!host.isConnected) {
+          document.body.appendChild(host);
+        }
+      }
+      if (document.body) mount();
+      else document.addEventListener("DOMContentLoaded", mount, { once: true });
+
       var pollTimer = setInterval(refreshHealth, POLL_MS);
       renderHealth();
 

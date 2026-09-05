@@ -44,7 +44,7 @@ const index = new VaultIndex({ root: vaultDir, dbPath: tempDbPath() });
 index.fullScan();
 const runtime = {
   cfg: resolveConfig({ vaults: [{ path: vaultDir, label: "测试库" }] }),
-  vaultKeys: [{ rootAbs: path.resolve(vaultDir), label: "测试库", path: vaultDir }],
+  vaultKeys: [{ rootAbs: path.resolve(vaultDir), label: "测试库", path: vaultDir, index }],
   indexes: new Map([[path.resolve(vaultDir), index]]),
   resolveVault() {
     return { label: "测试库", index };

@@ -500,7 +500,11 @@ export class VaultIndex {
     const inserted = store.insertSuggestions(fresh);
     const byKind = {};
     for (const d of fresh) byKind[d.kind] = (byKind[d.kind] ?? 0) + 1;
-    store.addHealthSnapshot({ notes: store.noteCount(), inserted });
+    store.addHealthSnapshot({
+      notes: store.noteCount(),
+      inserted,
+      open: store.openSuggestions({ limit: 100000 }).length,
+    });
     return { inserted, drafts: fresh.length, byKind };
   }
 

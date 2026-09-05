@@ -39,12 +39,21 @@ function vaultSummary(runtime, key) {
   try {
     const h = idx.health();
     let reviewOpen = 0;
+    let trend = [];
+    let embed = null;
     try {
-      reviewOpen = idx.reviewStats().openTotal;
+      const rs = idx.reviewStats();
+      reviewOpen = rs.openTotal;
+      trend = rs.snapshots.slice(0, 7).map((s) => ({ at: s.at, metrics: s.metrics }));
     } catch {
       /* 老库无建议表等：忽略 */
     }
-    return { ...base, ...h, reviewOpen, error: idx.scanErrors.length > 0 ? `${idx.scanErrors.length} 篇解析失败` : null };
+    try {
+      embed = idx.semanticState();
+    } catch {
+      embed = null;
+    }
+    return { ...base, ...h, reviewOpen, trend, embed, error: idx.scanErrors.length > 0 ? `${idx.scanErrors.length} 篇解析失败` : null };
   } catch (e) {
     return { ...base, ready: false, error: String(e && e.message ? e.message : e), notes: 0, brokenLinks: 0, recent: [] };
   }

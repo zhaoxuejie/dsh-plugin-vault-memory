@@ -134,6 +134,17 @@ window.__ModuleLoader__.load({
           if (v.reviewOpen > 0) line += " · 待审 " + v.reviewOpen;
           if (v.recent && v.recent.length) line += " · 近 7 天 " + v.recent.length + " 篇更新";
           healthBox.appendChild(el("div", { class: "vm-item" }, [line]));
+          if (v.trend && v.trend.length > 1) {
+            var trend = v.trend.slice().reverse().map(function (s) {
+              return s.metrics && s.metrics.open !== undefined ? s.metrics.open : "-";
+            });
+            healthBox.appendChild(el("div", { class: "vm-item", style: "font-size:11px;opacity:.7;" }, ["待审趋势: " + trend.join(" → ")]));
+          }
+          if (v.embed && v.embed.available) {
+            healthBox.appendChild(el("div", { class: "vm-item", style: "font-size:11px;opacity:.7;" }, ["语义检索就绪（" + v.embed.model + " · " + v.embed.coveredNotes + " 篇已嵌入）"]));
+          } else if (v.embed && v.embed.error) {
+            healthBox.appendChild(el("div", { class: "vm-item", style: "font-size:11px;opacity:.7;" }, ["语义不可用: " + v.embed.error]));
+          }
           (v.recent || []).slice(0, 5).forEach(function (r) {
             healthBox.appendChild(el("div", { class: "vm-item", style: "padding-left:12px;font-size:11px;opacity:.75;" }, [r.path]));
           });
@@ -184,7 +195,16 @@ window.__ModuleLoader__.load({
         capSave.disabled = true;
         fetchJson(CAPTURE_COMMIT, "POST", capPayload())
           .then(function (j) {
-            capOut.textContent = "已保存：" + j.path;
+            capOut.textContent = "";
+            capOut.appendChild(el("div", { class: "vm-item", style: "border:none;" }, ["已保存：" + j.path]));
+            // 在 Obsidian 打开（vault 显示名 = 库目录名）
+            var vb = (lastHealth.vaults || []).find(function (x) { return x.label === j.vault; });
+            var vaultName = vb ? vb.path.replace(/\\+$/g, "").split(/[\\/]/).pop() : "";
+            if (vaultName) {
+              var uri = "obsidian://open?vault=" + encodeURIComponent(vaultName) + "&file=" + encodeURIComponent(j.path.replace(/\.md$/i, ""));
+              var open = el("a", { href: uri, target: "_blank", class: "vm-btn", style: "display:inline-block;text-decoration:none;margin-top:6px;" }, ["在 Obsidian 打开 ↗"]);
+              capOut.appendChild(open);
+            }
             refreshHealth();
           })
           .catch(function (e) {
@@ -346,14 +366,63 @@ window.__ModuleLoader__.load({
           var card = el("div", { style: "border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:8px;margin:6px 0;" });
           card.appendChild(el("div", { class: "vm-item", style: "border:none;font-weight:700;" }, ["[" + s.kind + "] " + s.target + "（" + s.vault + "）"]));
           card.appendChild(el("div", { class: "vm-item", style: "border:none;font-size:11px;opacity:.8;" }, [s.reason]));
+
+          // kind 相关候选控件
+          var extra = {};
+          var choiceBox = el("div", { class: "vm-item", style: "border:none;" });
+          if (s.kind === "orphan") {
+            var proposed = (s.payload && s.payload.proposedLinks || []).slice(0, 3);
+            var checked = [];
+            proposed.forEach(function (p, i) {
+              var box = el("input", { type: "checkbox", style: "width:auto;", checked: "" });
+              box.addEventListener("change", function () { extra.links = collectLinks(); });
+              var row = el("div", { class: "vm-row", style: "margin:2px 0;" });
+              row.append(box, el("span", null, [p.path + "（" + (p.why || "") + "）"]));
+              choiceBox.appendChild(row);
+              checked.push({ box: box, path: p.path });
+            });
+            function collectLinks() {
+              return checked.filter(function (c) { return c.box.checked; }).map(function (c) { return c.path; });
+            }
+          } else if (s.kind === "broken_link") {
+            var candidates = (s.payload && s.payload.candidates || []).slice(0, 3);
+            if (candidates.length > 0) {
+              var sel = el("select", { style: "width:100%;background:rgba(0,0,0,.22);color:inherit;border:1px solid rgba(255,255,255,.14);border-radius:6px;padding:4px;" });
+              candidates.forEach(function (c) {
+                var opt = el("option", { value: c }, [c]);
+                sel.appendChild(opt);
+              });
+              sel.addEventListener("change", function () { extra.target = sel.value; });
+              choiceBox.appendChild(el("label", { class: "vm-label", style: "margin-top:0;" }, ["修复为:"]));
+              choiceBox.appendChild(sel);
+            } else {
+              choiceBox.appendChild(el("div", { style: "font-size:11px;opacity:.6;" }, ["库内无近似候选，需人工确认目标后再处理"]));
+            }
+          }
+          if (choiceBox.childNodes.length > 0) card.appendChild(choiceBox);
+
           var btnRow = el("div", { class: "vm-row", style: "margin-top:6px;" });
           var approve = el("button", { class: "vm-btn vm-primary" }, ["批准"]);
           approve.addEventListener("click", function () {
+            var opts = {};
+            if (s.kind === "orphan") {
+              opts.links = collectLinks();
+              if (!opts.links.length) {
+                reviewMsg.textContent = "请至少勾选一条要关联的笔记";
+                return;
+              }
+            } else if (s.kind === "broken_link") {
+              if (sel && sel.value) opts.target = sel.value;
+            }
             approve.disabled = true;
-            actionReview(s.id, "approve")
+            actionReview(s.id, "approve", opts)
               .then(function () { reviewMsg.textContent = "已批准并写回。"; loadReview(); })
               .catch(function (e) { reviewMsg.textContent = "批准失败：" + e.message; approve.disabled = false; });
           });
+          if (s.kind === "broken_link" && !(s.payload && s.payload.candidates && s.payload.candidates.length)) {
+            approve.disabled = true;
+            approve.title = "无候选目标";
+          }
           var dismiss = el("button", { class: "vm-btn" }, ["忽略"]);
           dismiss.addEventListener("click", function () {
             actionReview(s.id, "dismiss")

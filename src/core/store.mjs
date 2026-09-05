@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import fs from "node:fs";
 import { tokenizeText } from "./tokenize.mjs";
+import { encodeVec as encodeVecBuf, decodeVec as decodeVecBuf } from "./vector.mjs";
 
 const SCHEMA_VERSION = 2;
 
@@ -214,6 +215,8 @@ export class VaultStore {
     db.prepare("DELETE FROM fm_kv WHERE note_id = ?").run(id);
     db.prepare("DELETE FROM tags WHERE note_id = ?").run(id);
     db.prepare("DELETE FROM links WHERE from_note = ?").run(id);
+    db.prepare("DELETE FROM sections WHERE note_id = ?").run(id);
+    db.prepare("DELETE FROM embeddings WHERE note_id = ?").run(id);
   }
 
   /**
@@ -461,6 +464,78 @@ export class VaultStore {
   recentHealthSnapshots(limit = 14) {
     return this.db.prepare("SELECT * FROM health_snapshots ORDER BY at DESC LIMIT ?")
       .all(limit).map((r) => ({ at: Number(r.at), metrics: JSON.parse(r.metrics) }));
+  }
+
+  // ---- sections / embeddings（语义检索） ----
+
+  /** 整表替换某笔记的章节（无则删旧插新）。 */
+  replaceSections(noteId, sections) {
+    const del = this.db.prepare("DELETE FROM sections WHERE note_id = ?");
+    const ins = this.db.prepare("INSERT OR REPLACE INTO sections (note_id, seq, heading, text) VALUES (?, ?, ?, ?)");
+    this.db.exec("BEGIN");
+    try {
+      del.run(Number(noteId));
+      sections.forEach((s, i) => ins.run(Number(noteId), i, s.heading || "", s.text));
+      this.db.exec("COMMIT");
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
+    }
+  }
+
+  /** 该模型是否已有任何嵌入。 */
+  hasEmbeddings(model) {
+    const row = this.db.prepare("SELECT COUNT(*) AS n FROM embeddings WHERE model = ?").get(model);
+    return Number(row.n) > 0;
+  }
+
+  /** 需要补嵌入的笔记 id 列表（有章节但该模型无嵌入）。 */
+  notesMissingEmbeddings(model) {
+    return this.db.prepare(
+      `SELECT DISTINCT s.note_id AS id FROM sections s
+       WHERE NOT EXISTS (SELECT 1 FROM embeddings e WHERE e.note_id = s.note_id AND e.model = ?)`,
+    ).all(model).map((r) => Number(r.id));
+  }
+
+  /** 单笔记章节文本（分块入向量用）。 */
+  sectionTexts(noteId) {
+    return this.db.prepare("SELECT seq, heading, text FROM sections WHERE note_id = ? ORDER BY seq")
+      .all(Number(noteId)).map((r) => ({ seq: Number(r.seq), heading: r.heading, text: r.text }));
+  }
+
+  /** 批量写嵌入。rows: [{ noteId, seq, vec: Float32Array }] */
+  storeEmbeddings(model, rows, dim) {
+    if (rows.length === 0) return;
+    const ins = this.db.prepare(
+      "INSERT OR REPLACE INTO embeddings (note_id, seq, model, dim, vec) VALUES (?, ?, ?, ?, ?)",
+    );
+    this.db.exec("BEGIN");
+    try {
+      for (const r of rows) ins.run(Number(r.noteId), r.seq, model, dim, encodeVecBuf(r.vec));
+      this.db.exec("COMMIT");
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
+    }
+  }
+
+  /** 读该模型全部向量（分块级），decode 为 Float32Array。 */
+  embeddingChunks(model) {
+    return this.db.prepare(
+      "SELECT note_id AS noteId, seq, vec FROM embeddings WHERE model = ? ORDER BY note_id, seq",
+    ).all(model).map((r) => ({ noteId: Number(r.noteId), seq: Number(r.seq), vec: decodeVecBuf(r.vec) }));
+  }
+
+  /** 该模型嵌入覆盖的笔记数。 */
+  embeddedNoteCount(model) {
+    const row = this.db.prepare("SELECT COUNT(DISTINCT note_id) AS n FROM embeddings WHERE model = ?").get(model);
+    return Number(row.n);
+  }
+
+  /** 全部笔记轻量行（嵌入分块用）。 */
+  allNotesLight() {
+    return this.db.prepare("SELECT id, path, content_plain FROM notes ORDER BY id").all()
+      .map((r) => ({ id: Number(r.id), path: r.path, contentPlain: r.content_plain }));
   }
 
   noteCount() {

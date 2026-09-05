@@ -10,6 +10,10 @@ import { scanVaultFiles, diffScans } from "./scanner.mjs";
 import { parseMarkdown } from "./parser.mjs";
 import { VaultStore } from "./store.mjs";
 import { searchVault } from "./search.mjs";
+import { splitSections } from "./sections.mjs";
+import { createOllamaEmbedder } from "./embed.mjs";
+import { cosine, normalize, rrfFuse } from "./vector.mjs";
+import { makeSnippet } from "./search.mjs";
 import { runReview, dedupeOpen } from "../engine/rules.mjs";
 import { applySuggestion as applySuggestionImpl, revertSuggestion as revertSuggestionImpl } from "../engine/apply.mjs";
 import { vaultError, VAULT_ERROR_CODES as C } from "../errors.mjs";
@@ -19,7 +23,8 @@ export class VaultIndex {
    * @param {object} p
    * @param {string} p.root vault 绝对路径
    * @param {string} p.dbPath SQLite 文件路径
-   * @param {object} [p.opts] { ignoreGlobs, ignoreDotDirs, watchIntervalMs, searchMaxResults, snippetChars }
+   * @param {object} [p.opts] { ignoreGlobs, ignoreDotDirs, watchIntervalMs, searchMaxResults, snippetChars, embed, embedder }
+   * @param {object} [p.opts.embed] { enabled, baseUrl, model, batchSize, timeoutMs }（embedder 注入时覆盖）
    */
   constructor({ root, dbPath, opts = {} }) {
     this.rootAbs = normalizeVaultRoot(root);
@@ -30,6 +35,7 @@ export class VaultIndex {
       watchIntervalMs: opts.watchIntervalMs ?? 10000,
       searchMaxResults: opts.searchMaxResults ?? 50,
       snippetChars: opts.snippetChars ?? 200,
+      embed: opts.embed && typeof opts.embed === "object" ? opts.embed : {},
     };
     this.store = null;
     this.lastScan = new Map();
@@ -38,6 +44,17 @@ export class VaultIndex {
     this.pending = false;
     this.ready = false;
     this.scanErrors = [];
+    this.embedder = opts.embedder || null;
+    this.embedBusy = false;
+    this.embedReady = false;
+    this.embedError = null;
+    if (!this.embedder && this.opts.embed.enabled === true) {
+      try {
+        this.embedder = createOllamaEmbedder(this.opts.embed);
+      } catch {
+        this.embedder = null;
+      }
+    }
   }
 
   ensureStore() {
@@ -75,6 +92,7 @@ export class VaultIndex {
         "INSERT INTO meta (k, v) VALUES ('last_full_scan', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
       ).run(String(Date.now()));
       store.refreshLinks();
+      if (this.embedder) this.refreshEmbeddingsAsync();
       return { indexed, errors };
     } finally {
       this.busy = false;
@@ -112,6 +130,7 @@ export class VaultIndex {
       }
       this.lastScan = next;
       store.refreshLinks();
+      if (this.embedder) this.refreshEmbeddingsAsync();
       return { indexed, removed };
     } finally {
       this.busy = false;
@@ -147,6 +166,121 @@ export class VaultIndex {
       tag: opts.tag ?? null,
       snippetChars: this.opts.snippetChars,
     });
+  }
+
+  // ============ 语义检索（v1.1，Ollama；不可用时优雅回退 fts） ============
+
+  /** 异步补分块与嵌入（幂等；embedBusy 防并发）。 */
+  refreshEmbeddingsAsync() {
+    if (!this.embedder || this.embedBusy) return this.embeddingPromise || Promise.resolve({ skipped: true });
+    const store = this.ensureStore();
+    const model = this.opts.embed.model;
+    this.embedBusy = true;
+    this.embeddingPromise = (async () => {
+      const st = store;
+      try {
+        // 1) 缺章节的笔记先分块
+        for (const n of st.allNotesLight()) {
+          if (st.sectionTexts(n.id).length > 0) continue;
+          if (!n.contentPlain || !n.contentPlain.trim()) continue;
+          const sections = splitSections(n.contentPlain, {});
+          st.replaceSections(n.id, sections);
+        }
+        // 2) 缺嵌入的笔记批量调用 embedder
+        const missing = st.notesMissingEmbeddings(model);
+        const jobs = [];
+        for (const id of missing) {
+          for (const s of st.sectionTexts(id)) jobs.push({ noteId: id, seq: s.seq, text: s.text });
+        }
+        let embedded = 0;
+        for (let i = 0; i < jobs.length; i += 16) {
+          const slice = jobs.slice(i, i + 16);
+          const vecs = await this.embedder.embed(slice.map((j) => j.text));
+          st.storeEmbeddings(model, slice.map((j, k) => ({ noteId: j.noteId, seq: j.seq, vec: normalize(vecs[k]) })), vecs[0] ? vecs[0].length : 0);
+          embedded += slice.length;
+        }
+        this.embedReady = st.hasEmbeddings(model);
+        this.embedError = null;
+        return { ok: true, embedded };
+      } catch (e) {
+        this.embedReady = st.hasEmbeddings(model);
+        this.embedError = e && e.message ? e.message : String(e);
+        return { ok: false, error: this.embedError };
+      } finally {
+        this.embedBusy = false;
+      }
+    })();
+    return this.embeddingPromise;
+  }
+
+  /** 语义状态（供工具/UI 提示）。 */
+  semanticState() {
+    if (!this.embedder) return { available: false, reason: "未启用（设置 embed.enabled）" };
+    const store = this.ensureStore();
+    const model = this.opts.embed.model;
+    const ready = store.hasEmbeddings(model);
+    return { available: ready, model, coveredNotes: ready ? store.embeddedNoteCount(model) : 0, error: this.embedError };
+  }
+
+  /**
+   * 智能检索：mode fts | semantic | hybrid。返回 { total, hits, engine }。
+   */
+  async searchSmart(q, opts = {}) {
+    this.ensureReady();
+    const store = this.ensureStore();
+    const limit = opts.limit ?? this.opts.searchMaxResults;
+    const folder = opts.folder ?? null;
+    const tag = opts.tag ?? null;
+    const snip = this.opts.snippetChars;
+    const mode = opts.mode === "semantic" || opts.mode === "hybrid" ? opts.mode : "fts";
+    const ftsResult = () => searchVault(store, q, { limit: limit * 2, folder, tag, snippetChars: snip });
+
+    if (mode === "fts" || !this.embedder) return { ...ftsResult(), engine: "fts" };
+    const model = this.opts.embed.model;
+    // 嵌入未就绪先尝试补（只补一次，短小 vault 秒级；失败回退 fts）
+    if (!store.hasEmbeddings(model)) {
+      const res = await this.refreshEmbeddingsAsync();
+      if (!res.ok) return { ...ftsResult(), engine: "fts" };
+    }
+    if (!store.hasEmbeddings(model)) return { ...ftsResult(), engine: "fts" };
+
+    let qvec;
+    try {
+      const [v] = await this.embedder.embed([q]);
+      qvec = normalize(v);
+    } catch {
+      return { ...ftsResult(), engine: "fts" };
+    }
+
+    // 分块余弦 → 每笔记取最高分
+    const best = new Map(); // path -> score
+    for (const chunk of store.embeddingChunks(model)) {
+      const note = store.getNoteById(chunk.noteId);
+      if (!note) continue;
+      if (folder && note.folder !== folder) continue;
+      if (tag && !store.noteTags(note.id).includes(tag.toLowerCase())) continue;
+      const sim = cosine(qvec, normalize(chunk.vec));
+      const prev = best.get(note.path);
+      if (prev === undefined || sim > prev) best.set(note.path, sim);
+    }
+    const vecList = [...best.entries()].map(([path, score]) => ({ path, score })).sort((a, b) => b.score - a.score);
+
+    if (mode === "semantic") {
+      const hits = vecList.slice(0, limit).map(({ path, score }) => {
+        const note = store.getNote(path);
+        return { path, title: note.title, score: round2(score * 100), snippet: makeSnippet(note.content_plain, q, snip) };
+      });
+      return { total: hits.length, hits, engine: "semantic" };
+    }
+
+    // hybrid：RRF 融合 fts + 向量
+    const ftsBase = ftsResult();
+    const fused = rrfFuse(ftsBase.hits.map((h) => ({ path: h.path, score: h.score })), vecList, 60);
+    const hits = fused.slice(0, limit).map(({ path, score }) => {
+      const note = store.getNote(path);
+      return { path, title: note.title, score: round2(score * 100), snippet: makeSnippet(note.content_plain, q, snip) };
+    });
+    return { total: hits.length, hits, engine: "hybrid" };
   }
 
   query(f = {}) {
@@ -416,6 +550,10 @@ export class VaultIndex {
 
 function normalizeTarget(rel) {
   return rel.replaceAll("\\", "/");
+}
+
+function round2(n) {
+  return Math.round(n * 100) / 100;
 }
 
 /** 文件名净化：去非法字符、压缩空白、限长；空则回退 untitled。 */

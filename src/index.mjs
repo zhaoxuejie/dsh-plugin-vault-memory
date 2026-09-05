@@ -59,7 +59,7 @@ export function apply(ctx, entryConfig) {
         throw vaultError(C.INVALID_ARG, "settings 服务不可用，无法在线修改配置");
       }
       // 只接受白名单键，防注入无关字段
-      const allowed = new Set(["enabled", "vaults", "ignoreGlobs", "ignoreDotDirs", "watchIntervalMs", "dbDir", "memory", "capture", "review", "gui"]);
+      const allowed = new Set(["enabled", "vaults", "ignoreGlobs", "ignoreDotDirs", "watchIntervalMs", "dbDir", "memory", "capture", "review", "embed", "gui"]);
       const clean = {};
       for (const k of Object.keys(patch)) {
         if (!allowed.has(k)) throw vaultError(C.INVALID_ARG, `不支持的配置键: ${k}`);
@@ -80,6 +80,7 @@ export function apply(ctx, entryConfig) {
       if (patch.memory && typeof patch.memory === "object") clean.memory = patch.memory;
       if (patch.capture && typeof patch.capture === "object") clean.capture = patch.capture;
       if (patch.review && typeof patch.review === "object") clean.review = patch.review;
+      if (patch.embed && typeof patch.embed === "object") clean.embed = patch.embed;
       if (patch.gui && typeof patch.gui === "object") clean.gui = patch.gui;
       await settingsScope.update(name, clean);
       // watch 回调里已 rebuildIndexes；此处同步兜底（如无 watch）

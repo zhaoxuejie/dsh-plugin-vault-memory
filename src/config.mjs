@@ -31,6 +31,13 @@ export const configSchema = Schema.object({
     hour: Schema.number().min(0).max(23).default(3),
     mocThreshold: Schema.number().min(3).default(8),
   }),
+  embed: Schema.object({
+    enabled: Schema.boolean().default(false),
+    baseUrl: Schema.string().default("http://127.0.0.1:11434"),
+    model: Schema.string().default("bge-m3"),
+    batchSize: Schema.number().min(1).max(64).default(16),
+    timeoutMs: Schema.number().min(1000).max(300000).default(60000),
+  }),
   gui: Schema.object({
     enabled: Schema.boolean().default(true),
   }),
@@ -48,6 +55,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   memory: { injectEnabled: true, maxTokens: 1200, ttlMs: 600000 },
   capture: { defaultFolder: "Captures", sourceTag: "" },
   review: { enabled: true, hour: 3, mocThreshold: 8 },
+  embed: { enabled: false, baseUrl: "http://127.0.0.1:11434", model: "bge-m3", batchSize: 16, timeoutMs: 60000 },
   gui: { enabled: true },
 });
 
@@ -57,6 +65,7 @@ export function resolveConfig(raw) {
   const mem = { ...DEFAULT_CONFIG.memory, ...(src.memory && typeof src.memory === "object" ? src.memory : {}) };
   const cap = { ...DEFAULT_CONFIG.capture, ...(src.capture && typeof src.capture === "object" ? src.capture : {}) };
   const rev = { ...DEFAULT_CONFIG.review, ...(src.review && typeof src.review === "object" ? src.review : {}) };
+  const emb = { ...DEFAULT_CONFIG.embed, ...(src.embed && typeof src.embed === "object" ? src.embed : {}) };
   const gui = { ...DEFAULT_CONFIG.gui, ...(src.gui && typeof src.gui === "object" ? src.gui : {}) };
   return {
     enabled: src.enabled !== false,
@@ -83,6 +92,13 @@ export function resolveConfig(raw) {
       enabled: rev.enabled !== false,
       hour: clampInt(rev.hour, DEFAULT_CONFIG.review.hour, 0, 23),
       mocThreshold: clampInt(rev.mocThreshold, DEFAULT_CONFIG.review.mocThreshold, 3, 100),
+    },
+    embed: {
+      enabled: emb.enabled === true,
+      baseUrl: typeof emb.baseUrl === "string" && emb.baseUrl.trim() !== "" ? emb.baseUrl.trim() : DEFAULT_CONFIG.embed.baseUrl,
+      model: typeof emb.model === "string" && emb.model.trim() !== "" ? emb.model.trim() : DEFAULT_CONFIG.embed.model,
+      batchSize: clampInt(emb.batchSize, DEFAULT_CONFIG.embed.batchSize, 1, 64),
+      timeoutMs: clampInt(emb.timeoutMs, DEFAULT_CONFIG.embed.timeoutMs, 1000, 300000),
     },
     gui: { enabled: gui.enabled !== false },
   };

@@ -290,6 +290,50 @@ export class VaultStore {
     return this.db.prepare("SELECT tag FROM tags WHERE note_id = ?").all(Number(noteId)).map((t) => t.tag);
   }
 
+  /** 指向该笔记的入链（已解析）：[{ path }] */
+  inlinksOf(noteId) {
+    return this.db.prepare(
+      "SELECT n.path FROM links l JOIN notes n ON n.id = l.from_note WHERE l.resolved_note = ? ORDER BY n.path",
+    ).all(Number(noteId)).map((r) => ({ path: r.path }));
+  }
+
+  /** 该笔记的出链（已解析目标）：[{ path }] */
+  outlinksOf(noteId) {
+    return this.db.prepare(
+      "SELECT n.path FROM links l JOIN notes n ON n.id = l.resolved_note WHERE l.from_note = ? AND l.resolved_note IS NOT NULL ORDER BY n.path",
+    ).all(Number(noteId)).map((r) => ({ path: r.path }));
+  }
+
+  /** 与目标共享标签的笔记（排除自身）：[{ noteId, path, count }]（count=共享标签数） */
+  sharedTagNotes(noteId) {
+    return this.db.prepare(
+      `SELECT t2.note_id AS noteId, n.path, COUNT(*) AS count
+       FROM tags t1
+       JOIN tags t2 ON t2.tag = t1.tag AND t2.note_id <> t1.note_id
+       JOIN notes n ON n.id = t2.note_id
+       WHERE t1.note_id = ? GROUP BY t2.note_id ORDER BY count DESC, n.path`,
+    ).all(Number(noteId)).map((r) => ({ noteId: Number(r.noteId), path: r.path, count: Number(r.count) }));
+  }
+
+  /** 与目标共引（同一第三方引用两者）的笔记：[{ noteId, path, shared }]（shared=共同引用方数量） */
+  coCitedNotes(noteId) {
+    return this.db.prepare(
+      `SELECT l2.resolved_note AS noteId, n.path, COUNT(*) AS shared
+       FROM links l1
+       JOIN links l2 ON l2.from_note = l1.from_note AND l2.resolved_note <> l1.resolved_note
+       JOIN notes n ON n.id = l2.resolved_note
+       WHERE l1.resolved_note = ? AND l2.resolved_note IS NOT NULL
+       GROUP BY l2.resolved_note ORDER BY shared DESC, n.path`,
+    ).all(Number(noteId)).map((r) => ({ noteId: Number(r.noteId), path: r.path, shared: Number(r.shared) }));
+  }
+
+  /** 列出悬空链接（断链）供健康面板：[{ fromPath, target }] */
+  brokenLinks() {
+    return this.db.prepare(
+      "SELECT n.path AS fromPath, l.target FROM links l JOIN notes n ON n.id = l.from_note WHERE l.resolved_note IS NULL ORDER BY n.path",
+    ).all();
+  }
+
   noteCount() {
     return Number(this.db.prepare("SELECT COUNT(*) AS n FROM notes").get().n);
   }

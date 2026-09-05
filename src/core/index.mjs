@@ -69,6 +69,9 @@ export class VaultIndex {
       this.lastScan = files;
       this.ready = true;
       this.scanErrors = errors;
+      store.db.prepare(
+        "INSERT INTO meta (k, v) VALUES ('last_full_scan', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
+      ).run(String(Date.now()));
       store.refreshLinks();
       return { indexed, errors };
     } finally {
@@ -187,6 +190,129 @@ export class VaultIndex {
     };
   }
 
+  /**
+   * 关联笔记：入链/出链/同标签/共引（共引与多标签权重高）。
+   * @param {string} rel 起点笔记相对路径
+   * @param {{ limit?: number }} opts
+   */
+  related(rel, opts = {}) {
+    this.ensureReady();
+    const store = this.ensureStore();
+    const note = store.getNote(rel);
+    if (!note) throw vaultError(C.NOTE_NOT_FOUND, `笔记不存在: ${rel}`);
+    const limit = Math.min(20, Math.max(1, opts.limit ?? 10));
+    const byPath = new Map(); // path -> { relation, reason, score }
+    const add = (path, relation, reason, score) => {
+      if (path === note.path) return;
+      const cur = byPath.get(path);
+      if (!cur || score > cur.score) byPath.set(path, { path, relation, reason, score });
+    };
+    for (const { path: p } of store.inlinksOf(note.id)) add(p, "inlink", `被 ${p} 引用`, 3);
+    for (const { path: p } of store.outlinksOf(note.id)) add(p, "outlink", `引用 ${p}`, 2);
+    for (const { path: p, count } of store.sharedTagNotes(note.id)) {
+      if (count >= 2) add(p, "tag-shared", `同标签 ${store.noteTags(Number(store.getNote(p).id)).join("、")}`, count);
+    }
+    for (const { path: p, shared } of store.coCitedNotes(note.id)) {
+      if (shared >= 2) add(p, "co-cited", `被 ${shared} 篇笔记共同引用`, 3 + shared);
+    }
+    const list = [...byPath.values()].sort((a, b) => b.score - a.score).slice(0, limit);
+    return { path: note.path, total: list.length, related: list };
+  }
+
+  /**
+   * 健康摘要（供 GUI/巡检）：笔记数、断链、近期新增。
+   */
+  health() {
+    const store = this.ensureStore();
+    const broken = store.brokenLinks().length;
+    const weekMs = 7 * 24 * 3600 * 1000;
+    const recent = store.queryNotes({ modifiedSince: new Date(Date.now() - weekMs), sort: "modified_desc", limit: 10 })
+      .map((n) => ({ path: n.path, title: n.title, mtime: new Date(n.mtime_ms).toISOString() }));
+    return {
+      ready: this.ready,
+      notes: store.noteCount(),
+      brokenLinks: broken,
+      indexedAt: this.ready ? new Date(this.lastIndexedAt() ?? Date.now()).toISOString() : null,
+      recent,
+    };
+  }
+
+  lastIndexedAt() {
+    if (!this.store) return null;
+    const row = this.store.db.prepare("SELECT v FROM meta WHERE k = 'last_full_scan'").get();
+    if (!row) return null;
+    const ms = Number(row.v);
+    return Number.isFinite(ms) && ms > 0 ? ms : null;
+  }
+
+  /**
+   * 捕获预览（只组装不写盘）。
+   * @param {object} c 同 capture
+   * @returns {{ rel: string, exists: boolean, note: string }}
+   */
+  capturePreview(c) {
+    const { rel, note } = this.#composeCapture(c);
+    let exists = false;
+    try {
+      exists = fs.existsSync(resolveInside(this.rootAbs, rel));
+    } catch {
+      exists = false;
+    }
+    return { rel, exists, note };
+  }
+
+  /**
+   * 捕获新笔记（唯一写 vault 的原子入口）：
+   * 组装 frontmatter+正文 → 原子写盘（.tmp→rename）→ 立即重解析入库。
+   * @param {object} c { title, body, folder?, tags?: string[], source?, addRelated?: boolean }
+   * @returns {{ path: string, note: string }}
+   */
+  capture(c) {
+    const { rel, note } = this.#composeCapture(c);
+    const abs = resolveInside(this.rootAbs, rel);
+    if (fs.existsSync(abs)) {
+      throw vaultError(C.NOTE_EXISTS, `笔记已存在: ${rel}（如需覆盖请先处理或换标题）`);
+    }
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    const tmp = abs + ".tmp";
+    fs.writeFileSync(tmp, note, "utf8");
+    fs.renameSync(tmp, abs);
+    const stat = fs.statSync(abs);
+    const parsed = parseMarkdown(note, rel);
+    this.ensureStore().upsertNote(parsed, stat.mtimeMs);
+    if (this.lastScan) this.lastScan.set(rel, { mtimeMs: stat.mtimeMs, size: stat.size });
+    return { path: rel, note };
+  }
+
+  /** 组装捕获笔记（纯函数：frontmatter+正文+关联区），不碰磁盘。 */
+  #composeCapture(c) {
+    const title = (c.title || "").trim();
+    const body = (c.body || "").trim();
+    if (!title) throw vaultError(C.INVALID_ARG, "capture: title 不能为空");
+    if (!body) throw vaultError(C.INVALID_ARG, "capture: body 不能为空");
+    const folder = normalizeTarget(c.folder || "").replace(/^\/+|\/+$/g, "");
+    const rel = folder ? `${folder}/${sanitizeFileName(title)}.md` : `${sanitizeFileName(title)}.md`;
+    const tags = Array.isArray(c.tags) ? c.tags.map(String).filter(Boolean) : [];
+    const now = new Date();
+    const iso = now.toISOString();
+    const fmLines = ["---"];
+    if (tags.length > 0) fmLines.push(`tags: [${tags.map((t) => t.replace(/[",\]]/g, "")).join(", ")}]`);
+    if (c.source) fmLines.push(`source: ${String(c.source).replace(/"/g, "'")}`);
+    fmLines.push(`created: ${iso.slice(0, 10)}`);
+    fmLines.push(`updated: ${iso.slice(0, 10)}`);
+    fmLines.push("---");
+    const lines = [...fmLines, "", `# ${title}`, "", body];
+    if (c.addRelated) {
+      // 新笔记尚未入库，无法用链接图；改按标题全文检索建议关联（排除自身路径）
+      const rels = this.search(title, { limit: 5 }).hits.filter((h) => h.path !== rel).slice(0, 3);
+      if (rels.length > 0) {
+        lines.push("", "## 关联");
+        for (const r of rels) lines.push(`- [[${r.path.replace(/\.md$/i, "")}]]`);
+      }
+    }
+    return { rel, note: lines.join("\n") + "\n" };
+  }
+
   stats() {
     if (!this.ready) return { notes: 0, ready: false, errors: this.scanErrors.length };
     return { notes: this.ensureStore().noteCount(), ready: true, errors: this.scanErrors.length };
@@ -203,6 +329,14 @@ export class VaultIndex {
 
 function normalizeTarget(rel) {
   return rel.replaceAll("\\", "/");
+}
+
+/** 文件名净化：去非法字符、压缩空白、限长；空则回退 untitled。 */
+function sanitizeFileName(name) {
+  let s = String(name).replace(/[\\/:*?"<>|\u0000-\u001f]/g, "").trim().replace(/\s+/g, " ");
+  if (!s) throw vaultError(C.INVALID_ARG, "标题无法生成合法文件名");
+  if (s.length > 120) s = s.slice(0, 120).trim();
+  return s;
 }
 
 /** 由 vault 路径计算 db 文件名（dbDir 为空时用 DSH_HOME 默认目录）。 */

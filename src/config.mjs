@@ -35,8 +35,8 @@ export const configSchema = Schema.object({
     enabled: Schema.boolean().default(false),
     baseUrl: Schema.string().default("http://127.0.0.1:11434"),
     model: Schema.string().default("bge-m3"),
-    batchSize: Schema.number().min(1).max(64).default(16),
-    timeoutMs: Schema.number().min(1000).max(300000).default(60000),
+    batchSize: Schema.number().min(1).max(64).default(8),
+    timeoutMs: Schema.number().min(1000).max(600000).default(120000),
   }),
   gui: Schema.object({
     enabled: Schema.boolean().default(true),
@@ -55,7 +55,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   memory: { injectEnabled: true, maxTokens: 1200, ttlMs: 600000 },
   capture: { defaultFolder: "Captures", sourceTag: "" },
   review: { enabled: true, hour: 3, mocThreshold: 8 },
-  embed: { enabled: false, baseUrl: "http://127.0.0.1:11434", model: "bge-m3", batchSize: 16, timeoutMs: 60000 },
+  embed: { enabled: false, baseUrl: "http://127.0.0.1:11434", model: "bge-m3", batchSize: 8, timeoutMs: 120000 },
   gui: { enabled: true },
 });
 
@@ -98,7 +98,7 @@ export function resolveConfig(raw) {
       baseUrl: typeof emb.baseUrl === "string" && emb.baseUrl.trim() !== "" ? emb.baseUrl.trim() : DEFAULT_CONFIG.embed.baseUrl,
       model: typeof emb.model === "string" && emb.model.trim() !== "" ? emb.model.trim() : DEFAULT_CONFIG.embed.model,
       batchSize: clampInt(emb.batchSize, DEFAULT_CONFIG.embed.batchSize, 1, 64),
-      timeoutMs: clampInt(emb.timeoutMs, DEFAULT_CONFIG.embed.timeoutMs, 1000, 300000),
+      timeoutMs: clampInt(emb.timeoutMs, DEFAULT_CONFIG.embed.timeoutMs, 1000, 600000),
     },
     gui: { enabled: gui.enabled !== false },
   };

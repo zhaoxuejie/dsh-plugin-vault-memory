@@ -1,7 +1,12 @@
 // dsh-plugin-vault-memory — 巡检引擎：纯规则 → 建议草稿 → 入库
 // 原则：引擎零写权限（只读 store 出建议），写盘只发生在审查队列逐条批准后（apply.mjs 的职责）。
-// 已实现规则：orphan（孤儿）/ broken_link（断链）/ moc_draft（缺目录总览）；
-// missing_link / duplicate / stale 依赖语义或需更多启发，留待 v1.1（见 docs/phase3-interface-spec.md §1.3）。
+// 规则 v1：orphan / broken_link / moc_draft；高级规则（复用语义嵌入）：
+//   missing_link（语义相似但未互链）/ duplicate（疑似重复）/ stale（过期复审），
+//   由 runAdvancedReview 计算（只读，不入库）。
+
+import { cosine, normalize } from "../core/vector.mjs";
+
+const ADV_KINDS = ["missing_link", "duplicate", "stale"];
 
 /**
  * 运行一轮巡检，返回按 kind 的建议草稿（未入库）。
@@ -134,3 +139,128 @@ function searchTitles(store, title) {
     .filter((n) => words.some((w) => w.length >= 2 && (n.title.includes(w) || n.title.toLowerCase().includes(w.toLowerCase()))))
     .slice(0, 4);
 }
+
+// ================================================================
+// 高级规则（复用语义嵌入；只读计算，需 store 已含该模型嵌入）
+// ================================================================
+
+/**
+ * 语义向量辅助：每篇笔记 → 其分块均值单位向量；无嵌入的笔记跳过。
+ */
+function noteVectors(store, model) {
+  const acc = new Map(); // path -> { sum, n, note }
+  for (const c of store.embeddingChunks(model)) {
+    const note = store.getNoteById(c.noteId);
+    if (!note) continue;
+    const e = acc.get(note.path) || { sum: new Float32Array(c.vec.length), n: 0, note };
+    const v = c.vec;
+    for (let i = 0; i < v.length; i++) e.sum[i] += v[i];
+    e.n += 1;
+    acc.set(note.path, e);
+  }
+  const out = new Map();
+  for (const [path, e] of acc) {
+    const mean = new Float32Array(e.sum.length);
+    for (let i = 0; i < mean.length; i++) mean[i] = e.sum[i] / e.n;
+    out.set(path, { vec: normalize(mean), note: e.note });
+  }
+  return out;
+}
+
+function areLinked(store, aPath, bPath) {
+  const a = store.getNote(aPath);
+  const b = store.getNote(bPath);
+  if (!a || !b) return false;
+  const out = store.outlinksOf(a.id).some((o) => o.path === bPath);
+  const inl = store.inlinksOf(a.id).some((i) => i.path === bPath);
+  return out || inl;
+}
+
+function similarPairs(vecs, minSim) {
+  const paths = [...vecs.keys()];
+  const pairs = [];
+  for (let i = 0; i < paths.length; i++) {
+    for (let j = i + 1; j < paths.length; j++) {
+      const sim = cosine(vecs.get(paths[i]).vec, vecs.get(paths[j]).vec);
+      if (sim >= minSim) pairs.push({ a: paths[i], b: paths[j], sim });
+    }
+  }
+  return pairs.sort((x, y) => y.sim - x.sim);
+}
+
+/**
+ * 高级建议（只读）：missing_link / duplicate / stale。
+ * @param {import("./store.mjs").VaultStore} store
+ * @param {{ model?: string, caps?: Record<string, number> }} opts
+ * @returns {{ drafts: Array<{kind, target, reason, payload}>, available: boolean }}
+ */
+export function runAdvancedReview(store, opts = {}) {
+  const model = opts.model;
+  if (!model || !store.hasEmbeddings(model)) return { drafts: [], available: false };
+  const minSim = opts.minSim ?? 0.6;
+  const targetCap = opts.targetCap ?? 3;
+  const caps = { missing_link: 15, duplicate: 10, stale: 20, ...(opts.caps || {}) };
+  const drafts = [];
+
+  const vecs = noteVectors(store, model);
+  if (vecs.size < 2) return { drafts: [], available: false };
+  const now = Date.now();
+
+  // ---- missing_link：语义相近（未互链），每篇至多 targetCap 条 ----
+  const perTarget = new Map();
+  const pairs = similarPairs(vecs, minSim);
+  for (const { a, b, sim } of pairs) {
+    if (drafts.filter((d) => d.kind === "missing_link").length >= caps.missing_link) break;
+    if (areLinked(store, a, b)) continue;
+    if ((perTarget.get(a) ?? 0) >= targetCap) continue;
+    perTarget.set(a, (perTarget.get(a) ?? 0) + 1);
+    drafts.push({
+      kind: "missing_link",
+      target: a,
+      reason: `与 [[${b.replace(/\.md$/i, "")}]] 语义高度相近（相似度 ${sim.toFixed(2)}）但未互链`,
+      payload: { peer: b, sim: Math.round(sim * 100) / 100, score: sim },
+    });
+  }
+
+  // ---- duplicate：相似 ≥0.86 且规模相近 ----
+  for (const { a, b, sim } of pairs) {
+    if (drafts.filter((d) => d.kind === "duplicate").length >= caps.duplicate) break;
+    if (sim < 0.86) break; // pairs 已降序
+    const na = vecs.get(a).note;
+    const nb = vecs.get(b).note;
+    const ratio = Math.max(na.word_count, nb.word_count) / Math.max(1, Math.min(na.word_count, nb.word_count));
+    if (ratio > 2.5) continue; // 规模差太多 → 大笔记引用小笔记场景，归 missing_link
+    drafts.push({
+      kind: "duplicate",
+      target: a,
+      reason: `与 [[${b.replace(/\.md$/i, "")}]] 高度重合（相似 ${sim.toFixed(2)}，字数 ${na.word_count}/${nb.word_count}），疑似重复`,
+      payload: { peer: b, sim: Math.round(sim * 100) / 100, wordsA: na.word_count, wordsB: nb.word_count },
+    });
+  }
+
+  // ---- stale：久未更新但被仍在活跃更新的笔记引用 ----
+  for (const [path, { note }] of vecs) {
+    if (drafts.filter((d) => d.kind === "stale").length >= caps.stale) break;
+    if (!note.mtime_ms) continue;
+    const lastMod = Number(note.mtime_ms);
+    const ageDays = (now - lastMod) / 86400000;
+    if (ageDays < 180) continue;
+    if (note.word_count < 50) continue;
+    const inlinkers = store.inlinksOf(note.id);
+    const fresh = inlinkers.filter((i) => {
+      const inNote = store.getNote(i.path);
+      return inNote && now - Number(inNote.mtime_ms) < 30 * 86400000;
+    });
+    if (fresh.length === 0) continue;
+    drafts.push({
+      kind: "stale",
+      target: path,
+      reason: `${Math.round(ageDays)} 天未更新，但 ${fresh.length} 篇引用笔记（${fresh.map((f) => f.path).join("、")}）近 30 天有更新，建议复审`,
+      payload: { ageDays: Math.round(ageDays), freshInlinks: fresh.map((f) => f.path) },
+    });
+  }
+
+  return { drafts, available: true };
+}
+
+export { ADV_KINDS };

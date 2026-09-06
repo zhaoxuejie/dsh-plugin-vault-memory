@@ -29,7 +29,9 @@ window.__ModuleLoader__.load({
       "[" + ATTR + "] .vm-btn.vm-danger { background:rgba(200,70,70,.4); }",
       "[" + ATTR + "] input, [" + ATTR + "] textarea { width:100%; background:rgba(0,0,0,.22); border:1px solid rgba(255,255,255,.14); color:inherit; border-radius:6px; padding:5px 7px; font-size:12px; font-family:inherit; }",
       "[" + ATTR + "] textarea { min-height:70px; resize:vertical; }",
-      "[" + ATTR + "] .vm-row { display:flex; gap:6px; align-items:center; margin:6px 0; }",
+      "[" + ATTR + "] .vm-row { display:flex; gap:6px; align-items:center; margin:6px 0; flex-wrap:nowrap; }",
+      "[" + ATTR + "] .vm-row input:not([type='checkbox']) { width:auto; flex:1 1 auto; min-width:0; }",
+      "[" + ATTR + "] .vm-sec { margin:10px 0 2px; font-weight:700; }",
       "[" + ATTR + "] .vm-label { font-size:11px; opacity:.7; margin-top:8px; display:block; }",
       "[" + ATTR + "] .vm-note { white-space:pre-wrap; font-size:11px; opacity:.85; background:rgba(0,0,0,.25); border-radius:8px; padding:8px; max-height:180px; overflow:auto; }",
       "[" + ATTR + "] .vm-tab { cursor:pointer; padding:5px 10px; border-radius:8px 8px 0 0; font-size:12px; opacity:.6; }",
@@ -365,7 +367,7 @@ window.__ModuleLoader__.load({
       cfgBox.appendChild(addRow);
 
       // 语义检索（可选）
-      cfgBox.appendChild(el("div", { class: "vm-item", style: "border:none;font-weight:700;margin-top:10px;" }, ["语义检索（可选）"]));
+      cfgBox.appendChild(el("div", { class: "vm-sec" }, ["语义检索（可选）"]));
       cfgBox.appendChild(embedHint);
       var embEn = el("div", { class: "vm-row" });
       embEn.append(embedEnable, el("span", null, ["启用（需本机 Ollama）"]));
@@ -375,7 +377,7 @@ window.__ModuleLoader__.load({
       cfgBox.appendChild(el("label", { class: "vm-label" }, ["嵌入模型"]));
       cfgBox.appendChild(embedModel);
       // 巡检 + 记忆
-      cfgBox.appendChild(el("div", { class: "vm-item", style: "border:none;font-weight:700;margin-top:10px;" }, ["巡检与记忆"]));
+      cfgBox.appendChild(el("div", { class: "vm-sec" }, ["巡检与记忆"]));
       var revEn = el("div", { class: "vm-row" });
       revEn.append(reviewEnable, el("span", null, ["每日自动巡检"]), el("label", { style: "margin:0 4px 0 8px;font-size:11px;" }, ["小时"]), reviewHour);
       cfgBox.appendChild(revEn);
@@ -396,10 +398,9 @@ window.__ModuleLoader__.load({
       }
 
       function renderReview(items) {
-        reviewBox.textContent = "";
-        reviewMsg.textContent = "";
+        reviewList.textContent = "";
         if (!items.length) {
-          reviewBox.appendChild(el("div", { class: "vm-item" }, ["暂无待审建议。点「立即巡检」扫描孤儿/断链/缺目录总览。"]));
+          reviewList.appendChild(el("div", { class: "vm-item" }, ["暂无待审建议——点上方「立即巡检」扫描孤儿/断链/缺目录总览等。"]));
           return;
         }
         items.forEach(function (s) {
@@ -471,9 +472,8 @@ window.__ModuleLoader__.load({
           });
           btnRow.append(approve, dismiss);
           card.appendChild(btnRow);
-          reviewBox.appendChild(card);
+          reviewList.appendChild(card);
         });
-        reviewBox.appendChild(reviewMsg);
       }
 
       function loadReview() {
@@ -482,8 +482,8 @@ window.__ModuleLoader__.load({
             renderReview(j.items || []);
           })
           .catch(function (e) {
-            reviewBox.textContent = "";
-            reviewBox.appendChild(el("div", { class: "vm-item" }, ["读取失败：" + e.message]));
+            reviewList.textContent = "";
+            reviewList.appendChild(el("div", { class: "vm-item" }, ["读取失败：" + e.message]));
           });
       }
 
@@ -501,9 +501,12 @@ window.__ModuleLoader__.load({
           .catch(function (e) { reviewMsg.textContent = "巡检失败：" + e.message; })
           .finally(function () { reviewRunBtn.disabled = false; });
       });
-      var reviewTop = el("div", { class: "vm-row", style: "justify-content:space-between;" });
+      var reviewTop = el("div", { class: "vm-row", style: "align-items:center;gap:8px;" });
       reviewTop.append(reviewRunBtn);
+      var reviewList = el("div", null, []);
       reviewBox.appendChild(reviewTop);
+      reviewBox.appendChild(reviewMsg);
+      reviewBox.appendChild(reviewList);
 
       // ================= tab 切换 =================
       var boxes = { overview: healthBox, capture: capBox, config: cfgBox, review: reviewBox };

@@ -397,12 +397,24 @@ export class VaultStore {
   }
 
   // ---- suggestions 表 ----
-  /** 已 open 的同 kind+target 建议数（防重复）；返回 id 或 null。 */
-  findOpenSuggestion(kind, target) {
-    const row = this.db.prepare(
-      "SELECT id FROM suggestions WHERE kind = ? AND target = ? AND status = 'open' LIMIT 1",
-    ).get(kind, target);
-    return row ? Number(row.id) : null;
+  /**
+   * 已 open 的同 kind+target（可选 peer）建议；防重复。返回 id 或 null。
+   */
+  findOpenSuggestion(kind, target, peer) {
+    const rows = this.db.prepare(
+      "SELECT id, payload FROM suggestions WHERE kind = ? AND target = ? AND status = 'open'",
+    ).all(kind, target);
+    if (rows.length === 0) return null;
+    if (peer === undefined || peer === null) return Number(rows[0].id);
+    for (const r of rows) {
+      try {
+        const p = JSON.parse(r.payload);
+        if (p && p.peer === peer) return Number(r.id);
+      } catch {
+        /* 坏 payload 忽略 */
+      }
+    }
+    return null;
   }
 
   /** 批量插入建议（事务）。 */

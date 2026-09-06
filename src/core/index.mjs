@@ -14,7 +14,7 @@ import { splitSections } from "./sections.mjs";
 import { createOllamaEmbedder } from "./embed.mjs";
 import { cosine, normalize, rrfFuse } from "./vector.mjs";
 import { makeSnippet } from "./search.mjs";
-import { runReview, dedupeOpen } from "../engine/rules.mjs";
+import { runReview, dedupeOpen, runAdvancedReview } from "../engine/rules.mjs";
 import { applySuggestion as applySuggestionImpl, revertSuggestion as revertSuggestionImpl } from "../engine/apply.mjs";
 import { vaultError, VAULT_ERROR_CODES as C } from "../errors.mjs";
 
@@ -489,14 +489,31 @@ export class VaultIndex {
 
   /**
    * 跑一轮巡检并入库建议。
-   * @param {{ kinds?: string[] }} opts
+   * kinds 未指定 → 基础三条 + （嵌入可用时）advanced 三条；指定 → 仅所列。
+   * @param {{ kinds?: string[], mocThreshold?: number, minSim?: number, targetCap?: number, includeAdvanced?: boolean }} opts
    * @returns {{ inserted: number, drafts: number, byKind: Record<string, number> }}
    */
   reviewRun(opts = {}) {
     this.ensureReady();
     const store = this.ensureStore();
-    const { drafts } = runReview(store, opts);
-    const fresh = dedupeOpen(store, drafts);
+    const kinds = Array.isArray(opts.kinds) && opts.kinds.length > 0 ? opts.kinds : null;
+    const { drafts } = runReview(store, { ...opts, kinds: kinds || undefined });
+    let all = drafts;
+    if (kinds === null || kinds.some((k) => ["missing_link", "duplicate", "stale"].includes(k))) {
+      const model = this.opts.embed && this.opts.embed.model;
+      const adv = model ? runAdvancedReview(store, {
+        model,
+        minSim: opts.minSim,
+        targetCap: opts.targetCap,
+        caps: opts.caps,
+      }) : { drafts: [] };
+      if (adv.available && kinds === null) all = all.concat(adv.drafts);
+      else if (adv.available && kinds) {
+        const want = new Set(kinds);
+        all = all.concat(adv.drafts.filter((d) => want.has(d.kind)));
+      }
+    }
+    const fresh = dedupeOpen(store, all);
     const inserted = store.insertSuggestions(fresh);
     const byKind = {};
     for (const d of fresh) byKind[d.kind] = (byKind[d.kind] ?? 0) + 1;

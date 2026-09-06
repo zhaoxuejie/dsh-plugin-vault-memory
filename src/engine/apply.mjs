@@ -18,13 +18,60 @@ export function applySuggestion(index, sug, opts = {}) {
   switch (sug.kind) {
     case "orphan":
       return applyOrphan(index, sug, opts);
+    case "missing_link":
+      return applyMissingLink(index, sug);
     case "broken_link":
       return applyBrokenLink(index, sug, opts);
     case "moc_draft":
       return applyMoc(index, sug);
+    case "duplicate":
+      return applyDuplicate(index, sug);
+    case "stale":
+      return applyStale(index, sug);
     default:
       throw vaultError(C.INVALID_ARG, `不支持的建议类型: ${sug.kind}`);
   }
+}
+
+/** 通用"追加区块并备份"：读原文 → 追加 addendum → 原子写回 → status=applied。 */
+function appendBlock(index, sug, addendum, summary) {
+  const rel = sug.target;
+  const { exists, text } = index.readRawNote(rel);
+  if (!exists) throw vaultError(C.NOTE_NOT_FOUND, `笔记不存在: ${rel}`);
+  const back = { text, path: rel };
+  index.writeRawNote(rel, text.replace(/\s*$/, "") + addendum + "\n");
+  index.ensureStore().setSuggestion(sug.id, {
+    status: "applied",
+    payload: { ...sug.payload, backup: back, appliedAt: Date.now() },
+  });
+  return { ok: true, message: summary };
+}
+
+function applyMissingLink(index, sug) {
+  const peer = sug.payload && sug.payload.peer;
+  if (!peer) throw vaultError(C.INVALID_ARG, "missing_link 建议缺 peer");
+  const link = `[[${peer.replace(/\.md$/i, "")}]]`;
+  const addendum = ["", "## 相关", `- ${link}`].join("\n");
+  return appendBlock(index, sug, addendum, `${sug.target}：「相关」区已追加 ${link}（备份可回滚）`);
+}
+
+function applyDuplicate(index, sug) {
+  const peer = (sug.payload && sug.payload.peer) || "";
+  const addendum = `\n> #archive 疑似与 [[${peer.replace(/\.md$/i, "")}]] 重复（相似 ${sug.payload ? sug.payload.sim : "?"}），待人工核对合并 —— 由 vault-memory 标注，可回滚`;
+  return appendBlock(index, sug, addendum, `${sug.target}：已标注 #archive（未删除任何文件，可回滚）`);
+}
+
+function applyStale(index, sug) {
+  const peerRefs = Array.isArray(sug.payload && sug.payload.freshInlinks) ? sug.payload.freshInlinks : [];
+  const addendum = [
+    "",
+    "## 复审（建议）",
+    `> 本文 ${sug.payload ? sug.payload.ageDays : "?"} 天未更新，以下笔记近 30 天有更新：${peerRefs.map((p) => `[[${p.replace(/\.md$/i, "")}]]`).join("、") || "（无）"}`,
+    "- 结论现在是否仍然成立？",
+    "- 有无被新笔记取代/扩充的内容？",
+    "- 更新后删除本段。",
+  ].join("\n");
+  return appendBlock(index, sug, addendum, `${sug.target}：已追加「复审」草稿区（可回滚）`);
 }
 
 function applyOrphan(index, sug, opts) {

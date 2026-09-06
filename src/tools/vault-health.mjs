@@ -2,9 +2,10 @@
 
 import { vaultError, VAULT_ERROR_CODES as C } from "../errors.mjs";
 
-const KINDS = ["orphan", "broken_link", "moc_draft"];
+const KINDS = ["orphan", "broken_link", "moc_draft", "missing_link", "duplicate", "stale"];
 
-const DESCRIPTION = `查看知识库健康与巡检建议：孤儿笔记、断链、缺目录总览等（按 kind 过滤，默认全部）。
+const DESCRIPTION = `查看知识库健康与巡检建议（按 kind 过滤，默认全部）：orphan 孤儿 / broken_link 断链 / moc_draft 缺目录总览，
+以及（需已启用语义嵌入）missing_link 语义相近未互链 / duplicate 疑似重复 / stale 过期复审。
 巡检只生成带理由的建议清单，不会改动任何笔记；run=true 时才执行一轮巡检入库建议。
 任何库内改动需你逐条批准（GUI 审查队列或明确指示），本工具绝不静默写盘。`;
 

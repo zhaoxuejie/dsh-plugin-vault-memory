@@ -25,9 +25,9 @@ export function runReview(store, opts = {}) {
   return { drafts };
 }
 
-/** 去重：与 store 中已 open 的建议按 kind+target 去重。 */
+/** 去重：与 store 中已 open 的建议按 kind+target(+peer) 去重。 */
 export function dedupeOpen(store, drafts) {
-  return drafts.filter((d) => store.findOpenSuggestion(d.kind, d.target) === null);
+  return drafts.filter((d) => store.findOpenSuggestion(d.kind, d.target, d.payload && d.payload.peer) === null);
 }
 
 // ---------- orphan ----------

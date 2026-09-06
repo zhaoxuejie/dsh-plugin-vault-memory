@@ -30,7 +30,9 @@ window.__ModuleLoader__.load({
       "[" + ATTR + "] input, [" + ATTR + "] textarea { width:100%; background:rgba(0,0,0,.22); border:1px solid rgba(255,255,255,.14); color:inherit; border-radius:6px; padding:5px 7px; font-size:12px; font-family:inherit; }",
       "[" + ATTR + "] textarea { min-height:70px; resize:vertical; }",
       "[" + ATTR + "] .vm-row { display:flex; gap:6px; align-items:center; margin:6px 0; flex-wrap:nowrap; }",
-      "[" + ATTR + "] .vm-row input:not([type='checkbox']) { width:auto; flex:1 1 auto; min-width:0; }",
+      "[" + ATTR + "] .vm-row > span, [" + ATTR + "] .vm-row > label { white-space:nowrap; flex:0 0 auto; }",
+      "[" + ATTR + "] .vm-row input:not([type='checkbox']) { width:auto; flex:0 1 auto; min-width:0; }",
+      "[" + ATTR + "] .vm-row .vm-num { width:44px; flex:0 0 44px; }",
       "[" + ATTR + "] .vm-sec { margin:10px 0 2px; font-weight:700; }",
       "[" + ATTR + "] .vm-label { font-size:11px; opacity:.7; margin-top:8px; display:block; }",
       "[" + ATTR + "] .vm-note { white-space:pre-wrap; font-size:11px; opacity:.85; background:rgba(0,0,0,.25); border-radius:8px; padding:8px; max-height:180px; overflow:auto; }",
@@ -271,7 +273,7 @@ window.__ModuleLoader__.load({
       var embedHint = el("div", { class: "vm-item", style: "border:none;font-size:11px;opacity:.75;" }, ["可选：不开也能用关键词检索；开了才有语义搜索与 3 条高级巡检规则。"]);
       // 巡检
       var reviewEnable = el("input", { type: "checkbox" });
-      var reviewHour = el("input", { style: "width:56px;" });
+      var reviewHour = el("input", { class: "vm-num", maxlength: "2" });
       // 会话记忆
       var memEnable = el("input", { type: "checkbox" });
 
@@ -354,7 +356,7 @@ window.__ModuleLoader__.load({
         renderConfig(runtimeConfig);
       });
 
-      cfgBox.appendChild(el("div", { class: "vm-item", style: "border:none;font-size:12px;" }, ["修改立即写入 settings.yaml 并重建索引。"]));
+      cfgBox.appendChild(el("div", { class: "vm-item", style: "border-bottom:none;" }, ["修改立即写入 settings.yaml 并重建索引。"]));
       var enRow = el("div", { class: "vm-row" });
       enRow.append(cfgEnabled, el("span", null, ["启用插件"]));
       cfgBox.appendChild(enRow);

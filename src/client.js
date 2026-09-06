@@ -262,6 +262,17 @@ window.__ModuleLoader__.load({
       var cfgMsg = el("div", {}, []);
       var cfgSave = el("button", { class: "vm-btn vm-primary" }, ["保存配置"]);
 
+      // 语义检索（Ollama，可选）
+      var embedEnable = el("input", { type: "checkbox" });
+      var embedBaseUrl = el("input", { placeholder: "如 http://127.0.0.1:11434" });
+      var embedModel = el("input", { placeholder: "如 bge-m3（ollama pull bge-m3）" });
+      var embedHint = el("div", { class: "vm-item", style: "border:none;font-size:11px;opacity:.75;" }, ["可选：不开也能用关键词检索；开了才有语义搜索与 3 条高级巡检规则。"]);
+      // 巡检
+      var reviewEnable = el("input", { type: "checkbox" });
+      var reviewHour = el("input", { style: "width:56px;" });
+      // 会话记忆
+      var memEnable = el("input", { type: "checkbox" });
+
       function renderConfig(cfg) {
         cfgList.textContent = "";
         (cfg.vaults || []).forEach(function (v) {
@@ -276,8 +287,14 @@ window.__ModuleLoader__.load({
           row.appendChild(del);
           cfgList.appendChild(row);
         });
+        embedEnable.checked = !!(cfg.embed && cfg.embed.enabled);
+        if (cfg.embed) embedBaseUrl.value = cfg.embed.baseUrl || "http://127.0.0.1:11434";
+        if (cfg.embed) embedModel.value = cfg.embed.model || "bge-m3";
+        reviewEnable.checked = !!(cfg.review && cfg.review.enabled);
+        if (cfg.review) reviewHour.value = String(cfg.review.hour);
+        memEnable.checked = !!(cfg.memory && cfg.memory.injectEnabled);
       }
-      var runtimeConfig = { enabled: true, vaults: [] };
+      var runtimeConfig = { enabled: true, vaults: [], embed: {}, review: {}, memory: {} };
 
       function loadConfig() {
         fetchJson(SETTINGS_PATH)
@@ -293,9 +310,13 @@ window.__ModuleLoader__.load({
 
       cfgSave.addEventListener("click", function () {
         cfgSave.disabled = true;
+        var hour = parseInt(reviewHour.value, 10);
         fetchJson(SETTINGS_PATH, "POST", {
           enabled: cfgEnabled.checked,
           vaults: runtimeConfig.vaults,
+          embed: { enabled: embedEnable.checked, baseUrl: embedBaseUrl.value.trim() || undefined, model: embedModel.value.trim() || undefined },
+          review: { enabled: reviewEnable.checked, hour: Number.isFinite(hour) && hour >= 0 && hour <= 23 ? hour : runtimeConfig.review.hour },
+          memory: { injectEnabled: memEnable.checked },
         })
           .then(function (j) {
             cfgMsg.textContent = "已保存并生效。";
@@ -342,6 +363,25 @@ window.__ModuleLoader__.load({
       var addRow = el("div", { class: "vm-row" });
       addRow.append(addBtn, cfgSave);
       cfgBox.appendChild(addRow);
+
+      // 语义检索（可选）
+      cfgBox.appendChild(el("div", { class: "vm-item", style: "border:none;font-weight:700;margin-top:10px;" }, ["语义检索（可选）"]));
+      cfgBox.appendChild(embedHint);
+      var embEn = el("div", { class: "vm-row" });
+      embEn.append(embedEnable, el("span", null, ["启用（需本机 Ollama）"]));
+      cfgBox.appendChild(embEn);
+      cfgBox.appendChild(el("label", { class: "vm-label" }, ["Ollama 地址"]));
+      cfgBox.appendChild(embedBaseUrl);
+      cfgBox.appendChild(el("label", { class: "vm-label" }, ["嵌入模型"]));
+      cfgBox.appendChild(embedModel);
+      // 巡检 + 记忆
+      cfgBox.appendChild(el("div", { class: "vm-item", style: "border:none;font-weight:700;margin-top:10px;" }, ["巡检与记忆"]));
+      var revEn = el("div", { class: "vm-row" });
+      revEn.append(reviewEnable, el("span", null, ["每日自动巡检"]), el("label", { style: "margin:0 4px 0 8px;font-size:11px;" }, ["小时"]), reviewHour);
+      cfgBox.appendChild(revEn);
+      var memEn = el("div", { class: "vm-row" });
+      memEn.append(memEnable, el("span", null, ["新会话注入记忆快照"]));
+      cfgBox.appendChild(memEn);
       cfgBox.appendChild(cfgMsg);
       loadConfig();
 

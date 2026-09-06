@@ -76,6 +76,8 @@ export function registerVaultRoutes(webServer, runtime) {
     vaults: runtime.vaultKeys.map((k) => ({ path: k.path, label: k.label, error: k.error || null })),
     memory: runtime.cfg.memory,
     capture: runtime.cfg.capture,
+    review: runtime.cfg.review,
+    embed: runtime.cfg.embed,
     gui: runtime.cfg.gui,
   });
 

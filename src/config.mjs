@@ -30,6 +30,7 @@ export const configSchema = Schema.object({
     enabled: Schema.boolean().default(true),
     hour: Schema.number().min(0).max(23).default(3),
     mocThreshold: Schema.number().min(3).default(8),
+    dismissSilenceDays: Schema.number().min(0).max(3650).default(30),
   }),
   embed: Schema.object({
     enabled: Schema.boolean().default(false),
@@ -54,7 +55,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   dbDir: "",
   memory: { injectEnabled: true, maxTokens: 1200, ttlMs: 600000 },
   capture: { defaultFolder: "Captures", sourceTag: "" },
-  review: { enabled: true, hour: 3, mocThreshold: 8 },
+  review: { enabled: true, hour: 3, mocThreshold: 8, dismissSilenceDays: 30 },
   embed: { enabled: false, baseUrl: "http://127.0.0.1:11434", model: "bge-m3", batchSize: 8, timeoutMs: 120000 },
   gui: { enabled: true },
 });
@@ -92,6 +93,7 @@ export function resolveConfig(raw) {
       enabled: rev.enabled !== false,
       hour: clampInt(rev.hour, DEFAULT_CONFIG.review.hour, 0, 23),
       mocThreshold: clampInt(rev.mocThreshold, DEFAULT_CONFIG.review.mocThreshold, 3, 100),
+      dismissSilenceDays: clampInt(rev.dismissSilenceDays, DEFAULT_CONFIG.review.dismissSilenceDays, 0, 3650),
     },
     embed: {
       enabled: emb.enabled === true,

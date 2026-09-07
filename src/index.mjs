@@ -82,7 +82,8 @@ export function apply(ctx, entryConfig) {
       if (patch.review && typeof patch.review === "object") clean.review = patch.review;
       if (patch.embed && typeof patch.embed === "object") clean.embed = patch.embed;
       if (patch.gui && typeof patch.gui === "object") clean.gui = patch.gui;
-      await settingsScope.update(name, clean);
+      // scope.update 已绑定 namespace（update(patch)，merge 语义），不要再传 name
+      await settingsScope.update(clean);
       // watch 回调里已 rebuildIndexes；此处同步兜底（如无 watch）
       invalidateMemoryCache(runtime);
     },
@@ -177,7 +178,7 @@ export function apply(ctx, entryConfig) {
       for (const k of runtime.vaultKeys) {
         if (k.error || !k.index || !k.index.ready) continue;
         try {
-          k.index.reviewRun({ mocThreshold: cfg.review.mocThreshold });
+          k.index.reviewRun({ mocThreshold: cfg.review.mocThreshold, dismissSilenceDays: cfg.review.dismissSilenceDays });
         } catch {
           /* 单库巡检失败不影响其他库 */
         }

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { parseMarkdown } from "../src/core/parser.mjs";
 import { VaultStore } from "../src/core/store.mjs";
+import { dedupeOpen } from "../src/engine/rules.mjs";
 import { buildFtsQuery } from "../src/core/tokenize.mjs";
 import { makeFixtureVault, tempDir, tempDbPath } from "./helpers.mjs";
 
@@ -90,4 +91,57 @@ test("removeNote 级联删除", () => {
   const orphanLinks = store.db.prepare("SELECT COUNT(*) AS n FROM links WHERE from_note NOT IN (SELECT id FROM notes)").get();
   assert.equal(Number(orphanLinks.n), 0);
   assert.equal(store.removeNote("Prompt/chatgpt.md"), false);
+});
+
+test("wikilink 目录前缀按 vault 根解析（Obsidian 语义回归）", () => {
+  const dir = tempDir("vault-resolve-");
+  const store = new VaultStore(tempDbPath());
+  const files = {
+    "tools/a.md": "# A\n\n- [[tools/b]]\n- [[c]]\n",
+    "tools/b.md": "# B\n",
+    "tools/c.md": "# C\n",
+    "dsh插件/Docker 学习小结.md": "# Docker 学习小结\n",
+    "欢迎.md": "# 欢迎\n\n- [[tools/Docker 学习小结]]\n- [[/notes/tools/b]]\n",
+  };
+  for (const [rel, text] of Object.entries(files)) {
+    store.upsertNote(parseMarkdown(text, rel), 1700000000000);
+  }
+  store.refreshLinks();
+  const rows = store.db.prepare(
+    "SELECT l.target, l.resolved_note, n.path AS from_path FROM links l JOIN notes n ON n.id = l.from_note",
+  ).all();
+  const find = (from, target) => rows.find((r) => r.from_path === from && r.target === target);
+  const idOf = (path) => store.getNote(path).id;
+  // [[tools/b]] 从 tools/ 内笔记 → 按 vault 根解析命中 tools/b.md（不再拼成 tools/tools/b）
+  const hit = find("tools/a.md", "tools/b");
+  assert.ok(hit && hit.resolved_note !== null);
+  assert.equal(hit.resolved_note, idOf("tools/b.md"));
+  // 纯文件名 [[c]] 从 tools/ 内 → 相对来源目录命中 tools/c.md
+  const local = find("tools/a.md", "c");
+  assert.ok(local && local.resolved_note !== null);
+  assert.equal(local.resolved_note, idOf("tools/c.md"));
+  // [[tools/Docker 学习小结]]：根下不存在（真实在 dsh插件/）→ 真悬空
+  assert.equal(find("欢迎.md", "tools/Docker 学习小结").resolved_note, null);
+  // 绝对 [[/notes/tools/b]]：去前导 / 后根解析 notes/tools/b 不存在 → 悬空
+  assert.equal(find("欢迎.md", "/notes/tools/b").resolved_note, null);
+});
+
+test("忽略静默期：dismissed 同建议期内不重新生成、期外放行", () => {
+  const store = new VaultStore(tempDbPath());
+  const draftFor = (target) => [{ kind: "broken_link", target, reason: "x", payload: {} }];
+  // 入一条 open 建议并忽略它
+  store.insertSuggestions(draftFor("a.md"));
+  const openId = store.findOpenSuggestion("broken_link", "a.md");
+  assert.ok(openId !== null);
+  store.setSuggestion(openId, { status: "dismissed" });
+  // 静默期内（窗口 1 小时）：同 kind+target 不再生成
+  assert.equal(dedupeOpen(store, draftFor("a.md"), { silenceMs: 3600000 }).length, 0);
+  // 不同 target 不受影响
+  assert.equal(dedupeOpen(store, draftFor("b.md"), { silenceMs: 3600000 }).length, 1);
+  // 把忽略时间拨到窗口之外（2 小时前）→ 期外放行（防漏报）
+  store.db.prepare("UPDATE suggestions SET resolved_at = ? WHERE id = ?").run(Date.now() - 2 * 3600000, openId);
+  assert.equal(dedupeOpen(store, draftFor("a.md"), { silenceMs: 3600000 }).length, 1);
+  // 未启用静默期（silenceMs=0）→ dismissed 不拦，保持旧行为
+  store.db.prepare("UPDATE suggestions SET resolved_at = ? WHERE id = ?").run(Date.now(), openId);
+  assert.equal(dedupeOpen(store, draftFor("a.md"), { silenceMs: 0 }).length, 1);
 });

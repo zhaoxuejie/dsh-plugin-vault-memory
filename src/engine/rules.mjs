@@ -25,9 +25,10 @@ export function runReview(store, opts = {}) {
   return { drafts };
 }
 
-/** 去重：与 store 中已 open 的建议按 kind+target(+peer) 去重。 */
-export function dedupeOpen(store, drafts) {
-  return drafts.filter((d) => store.findOpenSuggestion(d.kind, d.target, d.payload && d.payload.peer) === null);
+/** 去重：同 kind+target(+peer) 已有 open 建议，或静默期内曾被忽略（dismissed），则跳过本轮生成。 */
+export function dedupeOpen(store, drafts, opts = {}) {
+  const silenceMs = Number.isFinite(Number(opts && opts.silenceMs)) && Number(opts.silenceMs) > 0 ? Number(opts.silenceMs) : 0;
+  return drafts.filter((d) => store.findSilenceBlocked(d.kind, d.target, d.payload && d.payload.peer, silenceMs) === null);
 }
 
 // ---------- orphan ----------

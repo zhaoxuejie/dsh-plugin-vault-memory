@@ -221,15 +221,32 @@ export class VaultStore {
 
   /**
    * 解析 wikilink/md 链接目标 → notes.id；悬空返回 null。
-   * 相对目标先按来源笔记所在目录归一（支持 ../）；越出库外即悬空。
+   * 语义对齐 Obsidian：
+   *  - 绝对（/ 开头）与含目录前缀（如 [[tools/xxx]]）→ 从 vault 根解析；
+   *  - "../" 开头 → 相对来源笔记目录（越出库外即悬空）；
+   *  - 纯文件名/标题 → 先相对来源目录，再回退 vault 根同名。
    */
   #resolveTarget(fromFolder, target) {
-    let t = target.replace(/^\.\//, "").replaceAll("\\", "/");
-    t = path.posix.normalize(path.posix.join(fromFolder || "", t));
-    if (t.startsWith("../")) return null;
-    const candidates = [t];
-    if (!t.toLowerCase().endsWith(".md")) candidates.push(t + ".md");
-    else candidates.push(t.replace(/\.md$/i, ""));
+    let t = target.replace(/^\.\//, "").replaceAll("\\", "/").trim();
+    let bases;
+    if (t.startsWith("/")) {
+      t = t.replace(/^\/+/, "");
+      bases = t ? [t] : [];
+    } else if (t.startsWith("../")) {
+      const abs = path.posix.normalize(path.posix.join(fromFolder || "", t));
+      bases = abs.startsWith("../") ? [] : [abs];
+    } else if (t.includes("/")) {
+      bases = [path.posix.normalize(t)]; // Obsidian：[[目录/标题]] 从 vault 根解析
+    } else {
+      const local = path.posix.normalize(path.posix.join(fromFolder || "", t));
+      bases = local === t ? [local] : [local, t]; // 相对优先，根同名回退
+    }
+    const candidates = [];
+    for (const b of bases) {
+      candidates.push(b);
+      if (!b.toLowerCase().endsWith(".md")) candidates.push(b + ".md");
+      else candidates.push(b.replace(/\.md$/i, ""));
+    }
     for (const c of candidates) {
       const id = this.pathMap.get(this.#key(c));
       if (id !== undefined) return id;
@@ -404,6 +421,33 @@ export class VaultStore {
     const rows = this.db.prepare(
       "SELECT id, payload FROM suggestions WHERE kind = ? AND target = ? AND status = 'open'",
     ).all(kind, target);
+    if (rows.length === 0) return null;
+    if (peer === undefined || peer === null) return Number(rows[0].id);
+    for (const r of rows) {
+      try {
+        const p = JSON.parse(r.payload);
+        if (p && p.peer === peer) return Number(r.id);
+      } catch {
+        /* 坏 payload 忽略 */
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 去重闸口：同 kind+target(+peer) 已有 open 建议，或在静默期内被忽略（dismissed）过。
+   * silenceMs > 0 时启用"忽略静默期"：期内被 dismiss 的同类建议不再重新生成；过期后放行（防漏报）。
+   * 返回阻塞的建议 id 或 null。
+   */
+  findSilenceBlocked(kind, target, peer, silenceMs) {
+    const useSilence = Number(silenceMs) > 0;
+    const rows = useSilence
+      ? this.db.prepare(
+        "SELECT id, payload FROM suggestions WHERE kind = ? AND target = ? AND (status = 'open' OR (status = 'dismissed' AND resolved_at >= ?))",
+      ).all(kind, target, Date.now() - silenceMs)
+      : this.db.prepare(
+        "SELECT id, payload FROM suggestions WHERE kind = ? AND target = ? AND status = 'open'",
+      ).all(kind, target);
     if (rows.length === 0) return null;
     if (peer === undefined || peer === null) return Number(rows[0].id);
     for (const r of rows) {

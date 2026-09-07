@@ -189,7 +189,7 @@ export function registerVaultRoutes(webServer, runtime) {
           const results = [];
           for (const t of targets) {
             try {
-              const r = t.index.reviewRun({ kinds, mocThreshold: runtime.cfg.review.mocThreshold });
+              const r = t.index.reviewRun({ kinds, mocThreshold: runtime.cfg.review.mocThreshold, dismissSilenceDays: runtime.cfg.review.dismissSilenceDays });
               results.push({ vault: t.label, ...r });
             } catch (e) {
               results.push({ vault: t.label, error: e.message });

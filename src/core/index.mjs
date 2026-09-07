@@ -18,6 +18,12 @@ import { runReview, dedupeOpen, runAdvancedReview } from "../engine/rules.mjs";
 import { applySuggestion as applySuggestionImpl, revertSuggestion as revertSuggestionImpl } from "../engine/apply.mjs";
 import { vaultError, VAULT_ERROR_CODES as C } from "../errors.mjs";
 
+/** review 忽略静默期（毫秒）：opts.dismissSilenceDays，0/缺省 = 关闭（现行为）。 */
+function reviewSilenceMs(opts = {}) {
+  const days = Number(opts.dismissSilenceDays);
+  return Number.isFinite(days) && days > 0 ? days * 86400000 : 0;
+}
+
 export class VaultIndex {
   /**
    * @param {object} p
@@ -513,7 +519,7 @@ export class VaultIndex {
         all = all.concat(adv.drafts.filter((d) => want.has(d.kind)));
       }
     }
-    const fresh = dedupeOpen(store, all);
+    const fresh = dedupeOpen(store, all, { silenceMs: reviewSilenceMs(opts) });
     const inserted = store.insertSuggestions(fresh);
     const byKind = {};
     for (const d of fresh) byKind[d.kind] = (byKind[d.kind] ?? 0) + 1;

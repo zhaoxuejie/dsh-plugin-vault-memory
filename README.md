@@ -46,18 +46,33 @@
 
 ## 安装
 
-```bash
-# 1) 安装到 web profile（装完需完全重启 dsh，不是刷新页面）
-dsh plugin --profile web add <本仓库路径>
+### 方式一：npm 安装（推荐）
 
-# 2) 配置 vault（插件设置页或直接编辑 ~/.dsh/settings.yaml）
-#    dsh-plugin-vault-memory:
-#      vaults:
-#        - path: D:\path\to\your-vault
-#          label: main
+```bash
+# 安装到 web profile（装完需完全重启 dsh，不是刷新页面）
+dsh plugin --profile web add dsh-plugin-vault-memory
 ```
 
-重启后右下角出现「📚 知识库」胶囊即生效。
+### 方式二：本地源码（开发 / 自用）
+
+```bash
+git clone https://github.com/zhaoxuejie/dsh-plugin-vault-memory.git
+dsh plugin --profile web add <仓库路径>
+pnpm install   # link 安装模式必需
+```
+
+### 配置 vault（两种方式安装后都需要）
+
+在插件设置页添加，或直接编辑 `~/.dsh/settings.yaml`：
+
+```yaml
+dsh-plugin-vault-memory:
+  vaults:
+    - path: D:\path\to\your-vault   # 你的 Obsidian 库绝对路径
+      label: main                    # 可选：给库起个名字
+```
+
+重启 dsh 后，浏览器右下角出现「📚 知识库」胶囊即安装成功。
 
 ### 可选：语义检索
 
@@ -79,8 +94,8 @@ ollama pull bge-m3     # 安装本地模型
 
 ## 文档
 
-- `docs/usage-guide.md` — 使用教程（新手从这里开始）
-- `DESIGN.md` — 设计与开发文档
+- [使用教程（新手从这里开始）](https://github.com/zhaoxuejie/dsh-plugin-vault-memory/blob/master/docs/usage-guide.md)
+- [设计与开发文档](https://github.com/zhaoxuejie/dsh-plugin-vault-memory/blob/master/DESIGN.md)
 
 ## 开发
 
